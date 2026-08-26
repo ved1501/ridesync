@@ -1,16 +1,128 @@
-# React + Vite
+# 🚗 RideSync
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+**RideSync** is a carpool and ride-sharing web & mobile application built for people who travel similar routes — especially daily office commuters. Users can offer rides, find rides along their route, book seats, and manage everything from a single dashboard.
 
-Currently, two official plugins are available:
+The goal: make daily commuting easier, cheaper, and more efficient by connecting people traveling the same way.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+---
 
-## React Compiler
+## ✨ Features
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- 🔐 **Secure authentication** — bcrypt password hashing + JWT-based sessions
+- 🚘 **Offer a ride** — drivers list their route, vehicle, seats, and price per seat
+- 🔍 **Find a ride** — search by route, date, and time
+- 🎫 **Book a seat** — join a ride as a passenger with real-time seat tracking
+- 📋 **My Rides dashboard** — view offered, joined, completed, and cancelled rides in one place
+- ✏️ **Edit / Cancel / Delete rides** — full ride lifecycle management for drivers
+- 🔄 **Automatic seat management** — seats update automatically as passengers join or leave
+- 📱 **Cross-platform** — same codebase runs as a web app and a native Android app (via Capacitor)
 
-## Expanding the ESLint configuration
+---
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## 🛠️ Tech Stack
+
+**Frontend**
+- React.js + Vite
+- Tailwind CSS
+- React Router
+- Capacitor (Android app packaging)
+
+**Backend**
+- Node.js + Express.js
+- PostgreSQL
+- JWT (jsonwebtoken) + bcrypt for authentication
+- REST API architecture
+
+---
+
+## 📁 Project Structure
+
+```
+ridesync/
+├── backend/
+│   ├── config/          # DB connection, JWT config
+│   ├── middleware/       # Auth middleware
+│   ├── routes/           # rides, bookings, users API routes
+│   └── server.js
+├── frontend/
+│   ├── android/          # Capacitor Android native project (generated, gitignored)
+│   ├── src/
+│   │   ├── context/       # Auth & Ride context providers
+│   │   ├── pages/          # Dashboard, FindRide, OfferRide, MyRides, etc.
+│   │   ├── components/
+│   │   └── utils/
+│   └── capacitor.config.json
+└── README.md
+```
+
+---
+
+## 🚀 Getting Started (Local Development)
+
+### Prerequisites
+- Node.js (v18+)
+- PostgreSQL installed locally
+
+### 1. Clone the repo
+```bash
+git clone https://github.com/ved1501/ridesync.git
+cd ridesync
+```
+
+### 2. Backend setup
+```bash
+cd backend
+npm install
+```
+
+Create a `.env` file in `backend/`:
+```
+JWT_SECRET=your_random_secret_here
+```
+
+Set up your local PostgreSQL database (`ridesync_db`) with the required tables (`users`, `rides`, `bookings`), then start the server:
+```bash
+node server.js
+```
+
+### 3. Frontend setup
+```bash
+cd frontend
+npm install
+```
+
+Create a `.env` file in `frontend/`:
+```
+VITE_API_URL=http://localhost:5000/api
+```
+
+Run the dev server:
+```bash
+npm run dev
+```
+
+### 4. Mobile (Android) build
+```bash
+npm run build
+npx cap sync
+npx cap open android
+```
+Then run from Android Studio.
+
+---
+
+## 🔒 Security
+
+- Passwords are hashed with **bcrypt** before storage — never stored in plain text
+- All ride/booking mutation routes are protected with **JWT authentication**
+- Ownership checks ensure users can only edit/cancel/delete their own rides and bookings
+
+---
+
+## 📄 License
+
+This project is for educational purposes.
+
+---
+
+Built with ❤️ by [Ved Rahangdale](https://github.com/ved1501)
