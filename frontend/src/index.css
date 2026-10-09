@@ -1,4 +1,31 @@
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap");
 @import "tailwindcss";
+
+@theme {
+  /* Brand ramp — replaces Tailwind's default "blue" everywhere it's used
+     (bg-blue-600, text-blue-600, border-blue-300, etc all pick this up
+     automatically, no per-file edits needed) */
+  --color-blue-50: #eef1fd;
+  --color-blue-100: #dee4fb;
+  --color-blue-200: #c0c9f7;
+  --color-blue-300: #99a5f0;
+  --color-blue-400: #6c77e5;
+  --color-blue-500: #4553d1;
+  --color-blue-600: #3346c7;
+  --color-blue-700: #2a38a3;
+  --color-blue-800: #232d82;
+  --color-blue-900: #1d2569;
+
+  /* Accent — sunrise coral, used sparingly for the route signature and
+     energetic highlights */
+  --color-accent-400: #ff8a66;
+  --color-accent-500: #ff6a45;
+  --color-accent-600: #e5502c;
+
+  --font-sans: "Plus Jakarta Sans", system-ui, sans-serif;
+  --font-display: "Space Grotesk", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
 
 * {
   box-sizing: border-box;
@@ -6,6 +33,123 @@
 
 body {
   margin: 0;
-  font-family: Inter, system-ui, sans-serif;
-  background: #f8fafc;
+  font-family: var(--font-sans);
+  background: #f6f7fb;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.6s ease-out both;
+}
+
+@keyframes routeTravelX {
+  0% {
+    left: 6%;
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    left: 94%;
+    opacity: 0.35;
+  }
+}
+
+.route-dot-x {
+  animation: routeTravelX 2.4s ease-in-out infinite alternate;
+}
+
+@keyframes routeTravelY {
+  0% {
+    top: 8%;
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    top: 92%;
+    opacity: 0.35;
+  }
+}
+
+.route-dot-y {
+  animation: routeTravelY 2.4s ease-in-out infinite alternate;
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+}
+
+.glass-crystal {
+  background: rgba(255, 255, 255, 0.42);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 8px 32px rgba(15, 20, 40, 0.18);
+}
+
+@media (max-width: 767px) {
+  .mobile-navbar {
+    background: rgba(255, 255, 255, 0.72);
+  }
+}
+
+@keyframes floatY {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+.animate-float {
+  animation: floatY 5s ease-in-out infinite;
+}
+
+@keyframes drift {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(14px, -12px);
+  }
+}
+
+.drift-dot {
+  animation: drift 12s ease-in-out infinite;
+}
+
+@keyframes flowPath {
+  to {
+    stroke-dashoffset: -200;
+  }
+}
+
+.flow-path {
+  animation: flowPath 7s linear infinite;
 }

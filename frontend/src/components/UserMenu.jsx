@@ -41,7 +41,7 @@ function UserMenu() {
         className="flex items-center gap-3"
       >
         <div className="hidden sm:block text-right">
-          <p className="text-sm font-semibold text-slate-900">
+          <p className="px-1 py-2 text-sm font-semibold text-slate-900 hover:text-slate-100 border-b-1 border-transparent hover:border-slate-100 transition-colors">
             {user?.name}
           </p>
         </div>

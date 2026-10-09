@@ -19,6 +19,32 @@ The goal: make daily commuting easier, cheaper, and more efficient by connecting
 
 ---
 
+## 📸 Screenshots
+
+### 🌐 Web Application
+
+| Landing Page | Landing Page |
+|---|---| 
+| ![Website](./Screenshots/Web%20View/Website.png) | ![Website2](./Screenshots/Web%20View/Website2.png) |
+
+| Login Page | Register Page |
+|---|---|
+| ![Login](./Screenshots/Web%20View/Login.png) | ![Register](./Screenshots/Web%20View/Register.png) |
+
+| Home | Profile |
+|---|---|
+| ![Home](./Screenshots/Web%20View/Home.png) | ![Profile](./Screenshots/Web%20View/Profile.png) |
+
+| Find Ride | Offer Rides |
+|---|---|
+| ![Find Rides](./Screenshots/Web%20View/Find%20Rides.png) | ![Offer Rides](./Screenshots/Web%20View/Offer%20Rides.png) |
+
+| My Rides | Ride Details |
+|---|---|
+| ![My Rides](./Screenshots/Web%20View/My%20Rides.png) | ![Ride Details](./Screenshots/Web%20View/Ride%20Details.png) |
+
+---
+
 ## 🛠️ Tech Stack
 
 **Frontend**

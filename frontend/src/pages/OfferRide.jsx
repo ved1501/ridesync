@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useRide } from "../context/useRide";
 import { useAuth } from "../context/useAuth";
-import UserMenu from "../components/UserMenu";
+// import UserMenu from "../components/UserMenu";
 import {
   ArrowLeft,
   MapPin,
@@ -13,6 +13,8 @@ import {
   Car,
   IndianRupee,
 } from "lucide-react";
+import Navbar from "../components/Navbar";
+import LocationPicker from "../components/LocationPicker";
 
 function OfferRide() {
   const navigate = useNavigate();
@@ -93,12 +95,19 @@ function OfferRide() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="relative z-10 min-h-screen">
       {/* Navbar */}
-      <nav className="bg-white border-b border-slate-200">
+      <Navbar />
+      {/* <nav className="glass-crystal backdrop-blur-md sticky top-0 z-20 rounded-none border-x-0 border-t-0">
         <div className="max-w-7xl mx-auto px-8 py-4 flex items-center justify-between">
-          <Link to="/dashboard" className="text-2xl font-bold text-blue-600">
-            RideSync
+          <Link to="/dashboard" className="flex flex-col items-center text-center">
+            <span className="text-2xl font-bold text-blue-600 font-display">
+              Ride<span className="text-green-600">Sync</span>
+            </span>
+
+            <span className="text-xs font-medium text-slate-600">
+              Sync your ride, with RideSync.
+            </span>
           </Link>
 
           <div className="flex items-center gap-6">
@@ -116,14 +125,15 @@ function OfferRide() {
             <UserMenu />
           </div>
         </div>
-      </nav>
+      </nav> */}
 
       {/* Main */}
-      <main className="max-w-4xl mx-auto px-8 py-10">
+      <main className="max-w-4xl mx-auto px-8 py-10 pb-32 md:pb-10">
+        <div className="glass-crystal rounded-3xl p-8 md:p-10">
         {/* Back */}
         <Link
           to="/dashboard"
-          className="inline-flex items-center gap-2 text-slate-600 hover:text-blue-600"
+          className="inline-flex items-center gap-2 text-slate-200 hover:text-blue-600"
         >
           <ArrowLeft size={18} />
           Back to Dashboard
@@ -133,7 +143,7 @@ function OfferRide() {
         <div className="mt-6">
           <h1 className="text-3xl font-bold text-slate-900">Offer a Ride</h1>
 
-          <p className="mt-2 text-slate-600">
+          <p className="mt-2 text-slate-200">
             Share your empty seats with people travelling your way.
           </p>
         </div>
@@ -141,7 +151,7 @@ function OfferRide() {
         {/* Form */}
         <form
           onSubmit={handleSubmit}
-          className="bg-white border border-slate-200 rounded-2xl p-8 mt-8 shadow-sm"
+          className="glass-crystal group bg-slate-300 border border-slate-100 rounded-2xl p-8 mt-8 shadow-sm animate-fade-in-up"
         >
           {/* Route */}
           <div>
@@ -155,13 +165,13 @@ function OfferRide() {
                   From
                 </label>
 
-                <input
-                  type="text"
+                <LocationPicker
                   name="from"
                   value={formData.from}
                   onChange={handleChange}
                   placeholder="e.g. Gondia"
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
+                  pickerTitle="Choose pickup location"
+                  className="w-full px-4 py-3 border border-slate-300 rounded-lg outline-none bg-white focus:ring-2 focus:ring-blue-500 transition-shadow"
                 />
               </div>
 
@@ -172,13 +182,13 @@ function OfferRide() {
                   To
                 </label>
 
-                <input
-                  type="text"
+                <LocationPicker
                   name="to"
                   value={formData.to}
                   onChange={handleChange}
                   placeholder="e.g. Fulchur"
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
+                  pickerTitle="Choose drop-off location"
+                  className="w-full px-4 py-3 border border-slate-300 rounded-lg outline-none bg-white focus:ring-2 focus:ring-blue-500 transition-shadow"
                 />
               </div>
             </div>
@@ -201,7 +211,7 @@ function OfferRide() {
                   name="date"
                   value={formData.date}
                   onChange={handleChange}
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-4 py-3 border border-slate-300 rounded-lg outline-none bg-white focus:ring-2 focus:ring-blue-500 transition-shadow"
                 />
               </div>
 
@@ -217,7 +227,7 @@ function OfferRide() {
                   name="time"
                   value={formData.time}
                   onChange={handleChange}
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-4 py-3 border border-slate-300 rounded-lg outline-none bg-white focus:ring-2 focus:ring-blue-500 transition-shadow"
                 />
               </div>
             </div>
@@ -243,7 +253,7 @@ function OfferRide() {
                   value={formData.seats}
                   onChange={handleChange}
                   placeholder="e.g. 3"
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-4 py-3 border border-slate-300 rounded-lg outline-none bg-white focus:ring-2 focus:ring-blue-500 transition-shadow"
                 />
 
                 <p className="text-xs text-slate-500 mt-2">Maximum 6 seats</p>
@@ -262,7 +272,7 @@ function OfferRide() {
                   value={formData.vehicle}
                   onChange={handleChange}
                   placeholder="e.g. Honda Amaze"
-                  className="w-full px-4 py-3 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full px-4 py-3 border border-slate-300 rounded-lg outline-none bg-white focus:ring-2 focus:ring-blue-500 transition-shadow"
                 />
               </div>
 
@@ -285,7 +295,7 @@ function OfferRide() {
                     value={formData.price}
                     onChange={handleChange}
                     placeholder="e.g. 75"
-                    className="w-full pl-9 pr-4 py-3 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full pl-9 pr-4 py-3 border border-slate-300 rounded-lg outline-none bg-white focus:ring-2 focus:ring-blue-500 transition-shadow"
                   />
                 </div>
               </div>
@@ -303,12 +313,13 @@ function OfferRide() {
           <div className="border-t border-slate-200 mt-8 pt-8 flex justify-end">
             <button
               type="submit"
-              className="px-8 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700"
+              className="px-8 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-all active:scale-[0.98]"
             >
               Offer Ride
             </button>
           </div>
         </form>
+              </div>
       </main>
     </div>
   );

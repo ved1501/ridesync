@@ -4,6 +4,9 @@ import { verifyToken } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
+// ============================================================
+// GET USER BOOKINGS
+// ============================================================
 router.get("/user/:userId", verifyToken, async (req, res) => {
   const userId = Number(req.params.userId);
 
@@ -29,6 +32,7 @@ router.get("/user/:userId", verifyToken, async (req, res) => {
         b.booking_code,
         b.status,
         b.booked_at,
+        b.cancelled_at,
 
         r.driver_id,
         u.name AS driver_name,
@@ -40,19 +44,14 @@ router.get("/user/:userId", verifyToken, async (req, res) => {
         r.departure_time,
         r.vehicle,
         r.price,
-        r.from_location,
-r.to_location,
-r.ride_date,
-r.departure_time,
-r.vehicle,
-r.price,
-r.seats_available
+        r.status AS ride_status,
+        r.seats_available
 
       FROM bookings b
       JOIN rides r ON b.ride_id = r.id
       JOIN users u ON r.driver_id = u.id
 
-     WHERE b.passenger_id = $1
+      WHERE b.passenger_id = $1
       ORDER BY b.booked_at DESC
       `,
       [userId],
@@ -68,7 +67,9 @@ r.seats_available
   }
 });
 
-// GET all bookings
+// ============================================================
+// GET ALL BOOKINGS
+// ============================================================
 router.get("/", async (req, res) => {
   try {
     const result = await pool.query(`
@@ -110,7 +111,172 @@ router.get("/", async (req, res) => {
   }
 });
 
-// GET booking by ID
+// ============================================================
+// GET CONFIRMED PASSENGERS FOR A RIDE
+// ============================================================
+router.get("/ride/:rideId/passengers", verifyToken, async (req, res) => {
+  try {
+    const rideId = Number(req.params.rideId);
+
+    if (!Number.isSafeInteger(rideId) || rideId <= 0) {
+      return res.status(400).json({
+        message: "Invalid ride ID",
+      });
+    }
+
+    // Check that the logged-in user is the driver of this ride
+    const rideResult = await pool.query(
+      `
+      SELECT driver_id
+      FROM rides
+      WHERE id = $1
+      `,
+      [rideId],
+    );
+
+    if (rideResult.rows.length === 0) {
+      return res.status(404).json({
+        message: "Ride not found",
+      });
+    }
+
+    if (Number(rideResult.rows[0].driver_id) !== Number(req.userId)) {
+      return res.status(403).json({
+        message: "Only the driver can view ride passengers.",
+      });
+    }
+
+    const result = await pool.query(
+      `
+      SELECT
+        b.id AS booking_id,
+        b.passenger_id,
+        b.booking_code,
+        b.status,
+        u.name AS passenger_name,
+        u.email AS passenger_email
+
+      FROM bookings b
+      JOIN users u ON b.passenger_id = u.id
+
+      WHERE b.ride_id = $1
+        AND b.status = 'Confirmed'
+
+      ORDER BY b.booked_at ASC
+      `,
+      [rideId],
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error("Error fetching ride passengers:", error);
+
+    res.status(500).json({
+      message: "Failed to fetch ride passengers",
+    });
+  }
+});
+
+// ============================================================
+// GET CHAT PARTICIPANTS FOR A RIDE
+// Includes:
+// - Confirmed passengers
+// - Cancelled passengers within 10-minute chat grace period
+// Driver only
+// ============================================================
+router.get(
+  "/ride/:rideId/chat-participants",
+  verifyToken,
+  async (req, res) => {
+    try {
+      const rideId = Number(req.params.rideId);
+
+      if (!Number.isSafeInteger(rideId) || rideId <= 0) {
+        return res.status(400).json({
+          message: "Invalid ride ID",
+        });
+      }
+
+      // --------------------------------------------------------
+      // Check that logged-in user is the driver
+      // --------------------------------------------------------
+      const rideResult = await pool.query(
+        `
+        SELECT driver_id
+        FROM rides
+        WHERE id = $1
+        `,
+        [rideId],
+      );
+
+      if (rideResult.rows.length === 0) {
+        return res.status(404).json({
+          message: "Ride not found",
+        });
+      }
+
+      if (Number(rideResult.rows[0].driver_id) !== Number(req.userId)) {
+        return res.status(403).json({
+          message: "Only the driver can view ride chat participants.",
+        });
+      }
+
+      // --------------------------------------------------------
+      // Get confirmed passengers + recently cancelled passengers
+      // --------------------------------------------------------
+      const result = await pool.query(
+        `
+        SELECT
+          b.id AS booking_id,
+          b.passenger_id,
+          b.booking_code,
+          b.status,
+          b.cancelled_at,
+
+          u.name AS passenger_name,
+          u.email AS passenger_email
+
+        FROM bookings b
+
+        JOIN users u
+          ON b.passenger_id = u.id
+
+        WHERE b.ride_id = $1
+
+          AND (
+            b.status = 'Confirmed'
+
+            OR (
+              b.status = 'Cancelled'
+              AND b.cancelled_at IS NOT NULL
+              AND b.cancelled_at >= CURRENT_TIMESTAMP - INTERVAL '10 minutes'
+            )
+          )
+
+        ORDER BY
+          CASE
+            WHEN b.status = 'Confirmed' THEN 0
+            ELSE 1
+          END,
+          b.booked_at ASC
+        `,
+        [rideId],
+      );
+
+      res.json(result.rows);
+    } catch (error) {
+      console.error("Error fetching chat participants:", error);
+
+      res.status(500).json({
+        message: "Failed to fetch chat participants",
+      });
+    }
+  },
+);
+
+// ============================================================
+// GET BOOKING BY ID
+// ============================================================
 router.get("/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -143,7 +309,7 @@ router.get("/:id", async (req, res) => {
       JOIN users driver ON r.driver_id = driver.id
 
       WHERE b.id = $1
-    `,
+      `,
       [id],
     );
 
@@ -163,15 +329,16 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// CREATE booking
+// ============================================================
+// CREATE BOOKING
+// ============================================================
 router.post("/", verifyToken, async (req, res) => {
   const client = await pool.connect();
 
   try {
     const { ride_id } = req.body;
 
-    // passenger_id always comes from the authenticated user, never the body,
-    // so nobody can book a ride pretending to be someone else.
+    // Always get passenger ID from authenticated user
     const passengerId = req.userId;
     const rideId = Number(ride_id);
 
@@ -188,7 +355,9 @@ router.post("/", verifyToken, async (req, res) => {
 
     await client.query("BEGIN");
 
-    // Lock the ride row
+    // --------------------------------------------------------
+    // Lock ride row
+    // --------------------------------------------------------
     const rideResult = await client.query(
       `
       SELECT *
@@ -209,21 +378,42 @@ router.post("/", verifyToken, async (req, res) => {
 
     const ride = rideResult.rows[0];
 
-    const rideDateTime = new Date(
-      `${ride.ride_date.toISOString().split("T")[0]}T${ride.departure_time}`,
+    // --------------------------------------------------------
+    // Check 30-minute expiry
+    // --------------------------------------------------------
+    const expiryCheck = await client.query(
+      `
+      SELECT
+        (
+          $1::date
+          + $2::time
+          + INTERVAL '30 minutes'
+        ) < (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Calcutta') AS expired
+      `,
+      [ride.ride_date, ride.departure_time],
     );
 
-    const now = new Date();
+    if (expiryCheck.rows[0].expired) {
+      // Keep database status synchronized
+      await client.query(
+        `
+        UPDATE rides
+        SET status = 'Expired'
+        WHERE id = $1
+        `,
+        [rideId],
+      );
 
-    if (rideDateTime <= now) {
-      await client.query("ROLLBACK");
+      await client.query("COMMIT");
 
       return res.status(400).json({
-        message: "This ride has already departed",
+        message: "This ride has expired and can no longer be booked.",
       });
     }
 
+    // --------------------------------------------------------
     // Check ride status
+    // --------------------------------------------------------
     if (ride.status !== "Active") {
       await client.query("ROLLBACK");
 
@@ -232,8 +422,10 @@ router.post("/", verifyToken, async (req, res) => {
       });
     }
 
-    // Driver cannot book their own ride
-    if (Number(ride.driver_id) === passengerId) {
+    // --------------------------------------------------------
+    // Driver cannot book own ride
+    // --------------------------------------------------------
+    if (Number(ride.driver_id) === Number(passengerId)) {
       await client.query("ROLLBACK");
 
       return res.status(400).json({
@@ -241,7 +433,9 @@ router.post("/", verifyToken, async (req, res) => {
       });
     }
 
+    // --------------------------------------------------------
     // Check available seats
+    // --------------------------------------------------------
     if (ride.seats_available <= 0) {
       await client.query("ROLLBACK");
 
@@ -250,22 +444,26 @@ router.post("/", verifyToken, async (req, res) => {
       });
     }
 
-    // Check duplicate booking
+    // --------------------------------------------------------
+    // Check existing booking
+    // --------------------------------------------------------
     const existingBooking = await client.query(
       `
-  SELECT *
-  FROM bookings
-  WHERE ride_id = $1
-  AND passenger_id = $2
-  FOR UPDATE
-  `,
+      SELECT *
+      FROM bookings
+      WHERE ride_id = $1
+        AND passenger_id = $2
+      FOR UPDATE
+      `,
       [rideId, passengerId],
     );
 
     if (existingBooking.rows.length > 0) {
       const existing = existingBooking.rows[0];
 
+      // ------------------------------------------------------
       // Already joined
+      // ------------------------------------------------------
       if (existing.status === "Confirmed") {
         await client.query("ROLLBACK");
 
@@ -274,30 +472,104 @@ router.post("/", verifyToken, async (req, res) => {
         });
       }
 
+      // ------------------------------------------------------
       // Rejoin after leaving
+      // ------------------------------------------------------
       if (existing.status === "Cancelled") {
         const updatedBooking = await client.query(
           `
-      UPDATE bookings
-      SET
-        status = 'Confirmed',
-        booked_at = CURRENT_TIMESTAMP
-      WHERE id = $1
-      RETURNING *
-      `,
+          UPDATE bookings
+          SET
+            status = 'Confirmed',
+            booked_at = CURRENT_TIMESTAMP,
+            cancelled_at = NULL
+          WHERE id = $1
+          RETURNING *
+          `,
           [existing.id],
         );
 
-        await client.query(
+        const updatedRideResult = await client.query(
           `
-      UPDATE rides
-      SET seats_available = seats_available - 1
-      WHERE id = $1
-      `,
+          UPDATE rides
+          SET seats_available = seats_available - 1
+          WHERE id = $1
+          RETURNING
+            driver_id,
+            seats_available
+          `,
           [rideId],
         );
 
+        const updatedRide = updatedRideResult.rows[0];
+
+        // Create rejoin notification
+        const notificationResult = await client.query(
+          `
+          INSERT INTO notifications
+          (
+            user_id,
+            type,
+            title,
+            message,
+            ride_id,
+            booking_id
+          )
+          VALUES
+          (
+            $1,
+            'BOOKING_REJOINED',
+            'Passenger Rejoined',
+            (
+              SELECT name
+              FROM users
+              WHERE id = $2
+            ) || ' rejoined your ride from ' ||
+            $3 || ' to ' || $4,
+            $5,
+            $6
+          )
+          RETURNING
+            id,
+            user_id,
+            type,
+            title,
+            message,
+            ride_id,
+            booking_id,
+            is_read,
+            created_at
+          `,
+          [
+            updatedRide.driver_id,
+            passengerId,
+            ride.from_location,
+            ride.to_location,
+            rideId,
+            updatedBooking.rows[0].id,
+          ],
+        );
+
         await client.query("COMMIT");
+
+        // ----------------------------------------------------
+        // Real-time socket notification
+        // ----------------------------------------------------
+        const io = req.app.get("io");
+
+        if (io) {
+          io.to(`user_${updatedRide.driver_id}`).emit(
+            "new_notification",
+            notificationResult.rows[0],
+          );
+
+          io.to(`user_${updatedRide.driver_id}`).emit("ride_booking_created", {
+            rideId,
+            bookingId: updatedBooking.rows[0].id,
+            passengerId,
+            seatsAvailable: updatedRide.seats_available,
+          });
+        }
 
         return res.status(200).json({
           message: "Ride booked successfully",
@@ -306,51 +578,14 @@ router.post("/", verifyToken, async (req, res) => {
       }
     }
 
-    // Check if passenger had previously cancelled this ride
-    const cancelledBooking = await client.query(
-      `
-  SELECT id
-  FROM bookings
-  WHERE ride_id = $1
-  AND passenger_id = $2
-  AND status = 'Cancelled'
-  `,
-      [rideId, passengerId],
-    );
-
-    if (cancelledBooking.rows.length > 0) {
-      const rejoinedBooking = await client.query(
-        `
-    UPDATE bookings
-    SET status = 'Confirmed',
-        booked_at = CURRENT_TIMESTAMP
-    WHERE id = $1
-    RETURNING *
-    `,
-        [cancelledBooking.rows[0].id],
-      );
-
-      await client.query(
-        `
-    UPDATE rides
-    SET seats_available = seats_available - 1
-    WHERE id = $1
-    `,
-        [rideId],
-      );
-
-      await client.query("COMMIT");
-
-      return res.status(200).json({
-        message: "Ride booked successfully",
-        booking: rejoinedBooking.rows[0],
-      });
-    }
-
+    // --------------------------------------------------------
     // Generate booking code
+    // --------------------------------------------------------
     const bookingCode = `RS-${Math.floor(100000 + Math.random() * 900000)}`;
 
+    // --------------------------------------------------------
     // Create booking
+    // --------------------------------------------------------
     const bookingResult = await client.query(
       `
       INSERT INTO bookings
@@ -366,19 +601,104 @@ router.post("/", verifyToken, async (req, res) => {
       [rideId, passengerId, bookingCode],
     );
 
+    // --------------------------------------------------------
     // Decrease available seats
-    await client.query(
+    // --------------------------------------------------------
+    const updatedRideResult = await client.query(
       `
       UPDATE rides
       SET seats_available = seats_available - 1
       WHERE id = $1
+      RETURNING
+        driver_id,
+        seats_available
       `,
       [rideId],
     );
 
+    const updatedRide = updatedRideResult.rows[0];
+
+    // --------------------------------------------------------
+    // Create driver notification
+    // --------------------------------------------------------
+    const notificationResult = await client.query(
+      `
+      INSERT INTO notifications
+      (
+        user_id,
+        type,
+        title,
+        message,
+        ride_id,
+        booking_id
+      )
+      VALUES
+      (
+        $1,
+        'BOOKING_CREATED',
+        'New Passenger',
+        (
+          SELECT name
+          FROM users
+          WHERE id = $2
+        ) || ' joined your ride from ' ||
+        $3 || ' to ' || $4,
+        $5,
+        $6
+      )
+      RETURNING
+        id,
+        user_id,
+        type,
+        title,
+        message,
+        ride_id,
+        booking_id,
+        is_read,
+        created_at
+      `,
+      [
+        updatedRide.driver_id,
+        passengerId,
+        ride.from_location,
+        ride.to_location,
+        rideId,
+        bookingResult.rows[0].id,
+      ],
+    );
+
     await client.query("COMMIT");
 
-    res.status(201).json({
+    // --------------------------------------------------------
+    // Real-time socket events
+    // --------------------------------------------------------
+    const io = req.app.get("io");
+
+    if (io) {
+      console.log(
+        "BOOKING NOTIFICATION SOCKET:",
+        `user_${updatedRide.driver_id}`,
+        notificationResult.rows[0],
+      );
+
+      // Driver notification
+      io.to(`user_${updatedRide.driver_id}`).emit(
+        "new_notification",
+        notificationResult.rows[0],
+      );
+
+      // Update driver's RideDetails
+      io.to(`user_${updatedRide.driver_id}`).emit("ride_booking_created", {
+        rideId,
+        bookingId: bookingResult.rows[0].id,
+        passengerId,
+        seatsAvailable: updatedRide.seats_available,
+      });
+    } else {
+      console.log("BOOKING NOTIFICATION SOCKET: io is NOT available");
+    }
+
+    return res.status(201).json({
       message: "Ride booked successfully",
       booking: bookingResult.rows[0],
     });
@@ -387,7 +707,7 @@ router.post("/", verifyToken, async (req, res) => {
 
     console.error("Error creating booking:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: "Failed to book ride",
     });
   } finally {
@@ -395,7 +715,9 @@ router.post("/", verifyToken, async (req, res) => {
   }
 });
 
+// ============================================================
 // CANCEL / LEAVE RIDE
+// ============================================================
 router.patch("/:id/cancel", verifyToken, async (req, res) => {
   const client = await pool.connect();
 
@@ -404,7 +726,9 @@ router.patch("/:id/cancel", verifyToken, async (req, res) => {
 
     await client.query("BEGIN");
 
-    // Booking ko lock karo
+    // --------------------------------------------------------
+    // Lock booking
+    // --------------------------------------------------------
     const bookingResult = await client.query(
       `
       SELECT *
@@ -425,7 +749,9 @@ router.patch("/:id/cancel", verifyToken, async (req, res) => {
 
     const booking = bookingResult.rows[0];
 
-    // Ownership check: only the passenger who made this booking can cancel it
+    // --------------------------------------------------------
+    // Ownership check
+    // --------------------------------------------------------
     if (Number(booking.passenger_id) !== Number(req.userId)) {
       await client.query("ROLLBACK");
 
@@ -434,7 +760,9 @@ router.patch("/:id/cancel", verifyToken, async (req, res) => {
       });
     }
 
+    // --------------------------------------------------------
     // Already cancelled
+    // --------------------------------------------------------
     if (booking.status === "Cancelled") {
       await client.query("ROLLBACK");
 
@@ -443,7 +771,9 @@ router.patch("/:id/cancel", verifyToken, async (req, res) => {
       });
     }
 
-    // Sirf confirmed booking cancel hogi
+    // --------------------------------------------------------
+    // Only confirmed bookings can be cancelled
+    // --------------------------------------------------------
     if (booking.status !== "Confirmed") {
       await client.query("ROLLBACK");
 
@@ -452,30 +782,131 @@ router.patch("/:id/cancel", verifyToken, async (req, res) => {
       });
     }
 
-    // Booking cancel karo
+    // --------------------------------------------------------
+    // Cancel booking
+    // --------------------------------------------------------
     const updatedBooking = await client.query(
       `
       UPDATE bookings
-      SET status = 'Cancelled'
+      SET
+        status = 'Cancelled',
+        cancelled_at = CURRENT_TIMESTAMP
       WHERE id = $1
       RETURNING *
       `,
       [id],
     );
 
-    // Ride ki seat wapas add karo
-    await client.query(
+    // --------------------------------------------------------
+    // Return seat and get driver info
+    // --------------------------------------------------------
+    const rideInfoResult = await client.query(
       `
       UPDATE rides
       SET seats_available = LEAST(seats_available + 1, seats_total)
       WHERE id = $1
+      RETURNING
+        driver_id,
+        seats_available
       `,
       [booking.ride_id],
     );
 
+    if (rideInfoResult.rows.length === 0) {
+      await client.query("ROLLBACK");
+
+      return res.status(404).json({
+        message: "Ride not found",
+      });
+    }
+
+    const rideInfo = rideInfoResult.rows[0];
+
+    // --------------------------------------------------------
+    // Create notification for driver
+    // --------------------------------------------------------
+    const notificationResult = await client.query(
+      `
+      INSERT INTO notifications
+      (
+        user_id,
+        type,
+        title,
+        message,
+        ride_id,
+        booking_id
+      )
+      VALUES
+      (
+        $1,
+        'BOOKING_CANCELLED',
+        'Passenger Left Ride',
+        (
+          SELECT name
+          FROM users
+          WHERE id = $2
+        ) || ' left your ride',
+        $3,
+        $4
+      )
+      RETURNING
+        id,
+        user_id,
+        type,
+        title,
+        message,
+        ride_id,
+        booking_id,
+        is_read,
+        created_at
+      `,
+      [rideInfo.driver_id, booking.passenger_id, booking.ride_id, booking.id],
+    );
+
     await client.query("COMMIT");
 
-    res.json({
+    // --------------------------------------------------------
+    // Real-time socket events
+    // --------------------------------------------------------
+    const io = req.app.get("io");
+
+    if (io) {
+      console.log(
+        "BOOKING CANCELLED SOCKET:",
+        `user_${rideInfo.driver_id}`,
+        notificationResult.rows[0],
+      );
+
+      // Driver gets notification instantly
+      io.to(`user_${rideInfo.driver_id}`).emit(
+        "new_notification",
+        notificationResult.rows[0],
+      );
+
+      // Driver's RideDetails gets updated instantly
+      const cancellationPayload = {
+        rideId: booking.ride_id,
+        bookingId: booking.id,
+        passengerId: booking.passenger_id,
+        seatsAvailable: rideInfo.seats_available,
+      };
+
+      // Driver
+      io.to(`user_${rideInfo.driver_id}`).emit(
+        "ride_booking_cancelled",
+        cancellationPayload,
+      );
+
+      // Passenger who left
+      io.to(`user_${booking.passenger_id}`).emit(
+        "ride_booking_cancelled",
+        cancellationPayload,
+      );
+    } else {
+      console.log("BOOKING CANCELLED SOCKET: io is NOT available");
+    }
+
+    return res.json({
       message: "Ride left successfully",
       booking: updatedBooking.rows[0],
     });
@@ -484,7 +915,7 @@ router.patch("/:id/cancel", verifyToken, async (req, res) => {
 
     console.error("Error cancelling booking:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: "Failed to leave ride",
     });
   } finally {

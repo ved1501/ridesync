@@ -1,24 +1,18 @@
 import { useEffect, useState } from "react";
+import { io } from "socket.io-client";
 import { RideContext } from "./useRide";
 import { useAuth } from "./useAuth";
 import { authFetch } from "../utils/api";
 
-const API_URL = "http://192.168.1.4:5000/api"; 
+const API_URL = import.meta.env.VITE_API_URL || "http://192.168.31.200:5000/api";
+const SOCKET_URL = "http://192.168.31.200:5000";
 
-const getRideStatus = (ride) => {
-  if (ride.status === "Cancelled") {
-    return "Cancelled";
-  }
 
-  const rideDateTime = new Date(`${ride.ride_date}T${ride.departure_time}`);
-  const now = new Date();
-
-  if (rideDateTime < now) {
-    return "Completed";
-  }
-
-  return "Active";
-};
+// Ride status is authoritative from the backend (Active / In Progress /
+// Completed / Cancelled) — we no longer infer "Completed" just because the
+// scheduled time has passed. A ride only becomes Completed when the driver
+// explicitly marks it so (via Start Ride, then Complete Ride).
+const getRideStatus = (ride) => ride.status || "Active";
 
 export function RideProvider({ children }) {
   const { user, token } = useAuth();
@@ -35,7 +29,7 @@ export function RideProvider({ children }) {
       bookingId: booking.id,
       bookingCode: booking.booking_code,
       bookingStatus: booking.status,
-      status: booking.status,
+      status: booking.ride_status,
 
       from: booking.from_location,
       to: booking.to_location,
@@ -60,25 +54,26 @@ export function RideProvider({ children }) {
       },
     }));
 
-  useEffect(() => {
-    const fetchRides = async () => {
-      try {
-        const response = await fetch(`${API_URL}/rides`);
+  const fetchRides = async () => {
+    try {
+      const response = await fetch(`${API_URL}/rides`);
 
-        if (!response.ok) {
-          throw new Error("Failed to fetch rides");
-        }
-
-        const data = await response.json();
-
-        setRides(data);
-      } catch (error) {
-        console.error("Error fetching rides:", error);
-      } finally {
-        setLoadingRides(false);
+      if (!response.ok) {
+        throw new Error("Failed to fetch rides");
       }
-    };
 
+      const data = await response.json();
+
+      setRides(data);
+    } catch (error) {
+      console.error("Error fetching rides:", error);
+    } finally {
+      setLoadingRides(false);
+    }
+  };
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchRides();
   }, []);
 
@@ -110,6 +105,180 @@ export function RideProvider({ children }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchJoinedRides();
   }, [user, token]);
+
+  ////////////////////////////////////////////////////////////////////////////////
+  // Real-time ride updates
+
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const socket = io(SOCKET_URL);
+
+    socket.on("connect", () => {
+      console.log("Ride socket connected:", socket.id);
+
+      socket.emit("join_user_room", {
+        userId: user.id,
+      });
+    });
+
+    socket.on("ride_rescheduled", ({ ride }) => {
+      console.log("Real-time ride update:", ride);
+
+      // Update offered rides
+      setRides((previousRides) =>
+        previousRides.map((currentRide) =>
+          Number(currentRide.id) === Number(ride.id) ? ride : currentRide,
+        ),
+      );
+
+      // Update joined ride if this ride exists there
+      setJoinedRides((previousJoinedRides) =>
+        previousJoinedRides.map((currentRide) =>
+          Number(currentRide.id) === Number(ride.id)
+            ? {
+                ...currentRide,
+                status: ride.status,
+                ride_date: ride.ride_date,
+                departure_time: ride.departure_time,
+                date: ride.ride_date
+                  ? new Date(ride.ride_date).toLocaleDateString("en-IN")
+                  : "",
+                time: ride.departure_time
+                  ? ride.departure_time.slice(0, 5)
+                  : "",
+              }
+            : currentRide,
+        ),
+      );
+    });
+
+    socket.on("ride_cancelled", ({ ride, bookingId }) => {
+      console.log("Real-time ride cancellation:", ride);
+
+      // Update ride status for driver
+      setRides((previousRides) =>
+        previousRides.map((currentRide) =>
+          Number(currentRide.id) === Number(ride.id)
+            ? {
+                ...currentRide,
+                ...ride,
+                status: "Cancelled",
+              }
+            : currentRide,
+        ),
+      );
+
+      // Update booking status for passenger
+      setJoinedRides((previousJoinedRides) =>
+        previousJoinedRides.map((currentRide) =>
+          Number(currentRide.id) === Number(ride.id)
+            ? {
+                ...currentRide,
+                status: "Cancelled",
+                bookingStatus: "Cancelled",
+                ...(bookingId ? { bookingId } : {}),
+              }
+            : currentRide,
+        ),
+      );
+    });
+
+    socket.on("ride_expired", ({ ride }) => {
+      console.log("Real-time ride expiry:", ride);
+
+      // Update offered rides
+      setRides((previousRides) =>
+        previousRides.map((currentRide) =>
+          Number(currentRide.id) === Number(ride.id)
+            ? {
+                ...currentRide,
+                ...ride,
+                status: "Expired",
+              }
+            : currentRide,
+        ),
+      );
+
+      // Update joined rides
+      setJoinedRides((previousJoinedRides) =>
+        previousJoinedRides.map((currentRide) =>
+          Number(currentRide.id) === Number(ride.id)
+            ? {
+                ...currentRide,
+                status: "Expired",
+              }
+            : currentRide,
+        ),
+      );
+    });
+
+    socket.on("ride_started", ({ ride }) => {
+      console.log("Real-time ride started:", ride);
+
+      // Update offered rides
+      setRides((previousRides) =>
+        previousRides.map((currentRide) =>
+          Number(currentRide.id) === Number(ride.id)
+            ? {
+                ...currentRide,
+                ...ride,
+                status: "In Progress",
+              }
+            : currentRide,
+        ),
+      );
+
+      // Update joined rides
+      setJoinedRides((previousJoinedRides) =>
+        previousJoinedRides.map((currentRide) =>
+          Number(currentRide.id) === Number(ride.id)
+            ? {
+                ...currentRide,
+                status: "In Progress",
+              }
+            : currentRide,
+        ),
+      );
+    });
+
+    socket.on("ride_completed", ({ ride }) => {
+      console.log("Real-time ride completed:", ride);
+
+      // Update offered rides
+      setRides((previousRides) =>
+        previousRides.map((currentRide) =>
+          Number(currentRide.id) === Number(ride.id)
+            ? {
+                ...currentRide,
+                ...ride,
+                status: "Completed",
+              }
+            : currentRide,
+        ),
+      );
+
+      // Update joined rides
+      setJoinedRides((previousJoinedRides) =>
+        previousJoinedRides.map((currentRide) =>
+          Number(currentRide.id) === Number(ride.id)
+            ? {
+                ...currentRide,
+                status: "Completed",
+              }
+            : currentRide,
+        ),
+      );
+    });
+
+    socket.on("disconnect", () => {
+      console.log("Ride socket disconnected");
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [user]);
 
   /////////////////////////////////////////////////////////////////////////////////////
   // Join ride function
@@ -371,6 +540,26 @@ export function RideProvider({ children }) {
   //////////////////////////////////////////////////////////////////////////////
   //Cancel Ride Function
 
+  //////////////////////////////////////////////////////////////////////////
+  // Sync a ride's status into shared state after actions taken on the
+  // RideDetails page (start/complete/cancel), so Dashboard/MyRides reflect
+  // it immediately instead of showing stale data until a full reload.
+  const updateRideInState = (rideId, changes) => {
+    setRides((previousRides) =>
+      previousRides.map((ride) =>
+        Number(ride.id) === Number(rideId) ? { ...ride, ...changes } : ride,
+      ),
+    );
+
+    setJoinedRides((previousJoinedRides) =>
+      previousJoinedRides.map((ride) =>
+        Number(ride.id) === Number(rideId) ? { ...ride, ...changes } : ride,
+      ),
+    );
+  };
+
+  //////////////////////////////////////////////////////////////////////////
+
   const cancelRide = (rideId) => {
     const ride = rides.find((ride) => ride.id === rideId);
 
@@ -451,17 +640,13 @@ export function RideProvider({ children }) {
 
   const updateRide = async (rideId, updatedData) => {
     try {
-      const response = await authFetch(
-        `http://192.168.1.4:5000/api/rides/${rideId}`,
-        token,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(updatedData),
+      const response = await authFetch(`${API_URL}/rides/${rideId}`, token, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
         },
-      );
+        body: JSON.stringify(updatedData),
+      });
 
       const data = await response.json();
 
@@ -493,6 +678,77 @@ export function RideProvider({ children }) {
     }
   };
 
+  ////////////////////////////////////////////////////////////////////////////////
+  // Reschedule Ride Function
+
+  const rescheduleRide = async (rideId, rideDate, departureTime) => {
+    try {
+      const response = await authFetch(
+        `${API_URL}/rides/${rideId}/reschedule`,
+        token,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            ride_date: rideDate,
+            departure_time: departureTime,
+          }),
+        },
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          success: false,
+          message: data.message || "Failed to reschedule ride.",
+        };
+      }
+
+      // Update the ride immediately in shared state
+      setRides((previousRides) =>
+        previousRides.map((ride) =>
+          Number(ride.id) === Number(rideId) ? data.ride : ride,
+        ),
+      );
+
+      // Also update joined rides if this ride is present there
+      setJoinedRides((previousJoinedRides) =>
+        previousJoinedRides.map((ride) =>
+          Number(ride.id) === Number(rideId)
+            ? {
+                ...ride,
+                ride_date: data.ride.ride_date,
+                departure_time: data.ride.departure_time,
+                date: data.ride.ride_date
+                  ? new Date(data.ride.ride_date).toLocaleDateString("en-IN")
+                  : "",
+                time: data.ride.departure_time
+                  ? data.ride.departure_time.slice(0, 5)
+                  : "",
+                status: data.ride.status,
+              }
+            : ride,
+        ),
+      );
+
+      return {
+        success: true,
+        message: data.message || "Ride rescheduled successfully!",
+        ride: data.ride,
+      };
+    } catch (error) {
+      console.error("Error rescheduling ride:", error);
+
+      return {
+        success: false,
+        message: "Unable to connect to server.",
+      };
+    }
+  };
+
   return (
     <RideContext.Provider
       value={{
@@ -503,11 +759,14 @@ export function RideProvider({ children }) {
         addRide,
         deleteRide,
         updateRide,
+        rescheduleRide,
         updateDriverInfo,
+        updateRideInState,
         getRideStatus,
         cancelRide,
         loadingRides,
         fetchJoinedRides,
+        fetchRides,
       }}
     >
       {children}
