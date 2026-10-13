@@ -31,17 +31,25 @@ The goal: make daily commuting easier, cheaper, and more efficient by connecting
 |---|---|
 | ![Login](./Screenshots/Web%20View/Login.png) | ![Register](./Screenshots/Web%20View/Register.png) |
 
-| Home | Profile |
+| Dashboard | Profile |
 |---|---|
-| ![Home](./Screenshots/Web%20View/Home.png) | ![Profile](./Screenshots/Web%20View/Profile.png) |
+| ![Dashboard](./Screenshots/Web%20View/Dashboard.png) | ![Profile](./Screenshots/Web%20View/Profile.png) |
 
-| Find Ride | Offer Rides |
+| Find Ride |
 |---|---|
-| ![Find Rides](./Screenshots/Web%20View/Find%20Rides.png) | ![Offer Rides](./Screenshots/Web%20View/Offer%20Rides.png) |
+| ![Find Rides](./Screenshots/Web%20View/Find%20Rides.png) | 
+
+| Offer Rides | Offer Rides |
+|---|---|
+| ![Offer Rides](./Screenshots/Web%20View/Offer%20Rides.png) | ![Offer Rides 2](./Screenshots/Web%20View/Offer%20Rides2.png) |
 
 | My Rides | Ride Details |
 |---|---|
-| ![My Rides](./Screenshots/Web%20View/My%20Rides.png) | ![Ride Details](./Screenshots/Web%20View/Ride%20Details.png) |
+| ![My Rides](./Screenshots/Web%20View/My%20Rides.png) | ![My Rides2](./Screenshots/Web%20View/My%20Rides2.png) |
+
+| My Rides | Ride Details |
+|---|---|
+| ![Ride Details](./Screenshots/Web%20View/Ride%20Details.png) | ![Ride Details2](./Screenshots/Web%20View/Ride%20Details2.png) |
 
 ---
 
