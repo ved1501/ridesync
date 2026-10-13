@@ -42,11 +42,11 @@ The goal: make daily commuting easier, cheaper, and more efficient by connecting
 |---|---|
 | ![Offer Rides](./Screenshots/Web%20View/Offer%20Rides.png) | ![Offer Rides 2](./Screenshots/Web%20View/Offer%20Rides2.png) |
 
-| My Rides | Ride Details |
+| My Rides | My Rides |
 |---|---|
 | ![My Rides](./Screenshots/Web%20View/My%20Rides.png) | ![My Rides2](./Screenshots/Web%20View/My%20Rides2.png) |
 
-| My Rides | Ride Details |
+| Ride Details | Ride Details |
 |---|---|
 | ![Ride Details](./Screenshots/Web%20View/Ride%20Details.png) | ![Ride Details2](./Screenshots/Web%20View/Ride%20Details2.png) |
 
