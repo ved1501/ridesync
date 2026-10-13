@@ -25,7 +25,7 @@ The goal: make daily commuting easier, cheaper, and more efficient by connecting
 
 | Landing Page | Landing Page |
 |---|---| 
-| ![Website](./Screenshots/Web%20View/Website.png) | ![Website2](./Screenshots/Web%20View/Website2.png) |
+| ![Webapp](./Screenshots/Web%20View/Webapp.png) | ![Webapp2](./Screenshots/Web%20View/Webapp2.png) |
 
 | Login Page | Register Page |
 |---|---|
