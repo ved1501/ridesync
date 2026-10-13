@@ -36,7 +36,6 @@ The goal: make daily commuting easier, cheaper, and more efficient by connecting
 | ![Dashboard](./Screenshots/Web%20View/Dashboard.png) | ![Profile](./Screenshots/Web%20View/Profile.png) |
 
 | Find Ride |
-|---|---|
 | ![Find Rides](./Screenshots/Web%20View/Find%20Rides.png) | 
 
 | Offer Rides | Offer Rides |
