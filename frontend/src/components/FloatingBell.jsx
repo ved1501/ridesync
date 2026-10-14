@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useAuth } from "../context/useAuth";
 import NotificationBell from "./NotificationBell";
 
@@ -108,7 +109,9 @@ export default function FloatingBell() {
     inLowerHalf ? "bottom-14" : "top-14"
   }`;
 
-  return (
+  // Rendered on <body> through a portal, so no page wrapper (transforms,
+  // blur effects, stacking contexts) can hide it or shift its position.
+  return createPortal(
     <div
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -129,6 +132,7 @@ export default function FloatingBell() {
       }`}
     >
       <NotificationBell dropdownClassName={dropdownClassName} />
-    </div>
+    </div>,
+    document.body,
   );
 }

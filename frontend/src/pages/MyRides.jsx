@@ -389,7 +389,7 @@ function MyRides() {
 
                           <Link
                             to={`/ride/${ride.id}`}
-                            className="px-5 py-2 border bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-white hover:text-green-600 text-center"
+                            className="px-5 py-2 border bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-white hover:text-red-500 text-center"
                           >
                             View Ride
                           </Link>

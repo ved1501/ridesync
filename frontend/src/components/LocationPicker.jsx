@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { MapContainer, TileLayer, Marker, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -56,7 +57,7 @@ function MapPickerModal({ title, onClose, onSelect }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  return (
+  return createPortal(
     <div
       style={{ zIndex: 5000 }}
       className="fixed inset-0 bg-black/60 flex items-center justify-center p-4"
@@ -141,7 +142,8 @@ function MapPickerModal({ title, onClose, onSelect }) {
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

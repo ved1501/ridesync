@@ -31,8 +31,9 @@ export function RideProvider({ children }) {
       bookingStatus: booking.status,
       status: booking.ride_status,
 
-      from: booking.from_location,
-      to: booking.to_location,
+      // The part of the journey this passenger booked (stops support)
+      from: booking.boarding_location || booking.from_location,
+      to: booking.dropoff_location || booking.to_location,
 
       ride_date: booking.ride_date,
       departure_time: booking.departure_time,
@@ -44,7 +45,7 @@ export function RideProvider({ children }) {
       time: booking.departure_time ? booking.departure_time.slice(0, 5) : "",
 
       vehicle: booking.vehicle,
-      price: booking.price,
+      price: booking.fare ?? booking.price,
       seatsAvailable: booking.seats_available,
 
       driver: {

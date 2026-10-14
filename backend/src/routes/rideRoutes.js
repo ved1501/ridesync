@@ -1,6 +1,13 @@
 import express from "express";
 import pool from "../config/db.js";
 import { verifyToken } from "../middleware/authMiddleware.js";
+import {
+  buildOccupancy,
+  maxIn,
+  getRideSegments,
+  validateStops,
+  replaceRideStops,
+} from "../utils/segments.js";
 
 const router = express.Router();
 
@@ -22,6 +29,61 @@ const markExpiredRides = async () => {
   } catch (error) {
     console.error("Error marking expired rides:", error);
   }
+};
+
+// ============================================================
+// HELPER: add stops + seat occupancy to a list of ride rows
+//   stops      : [{ order, location, fare }]
+//   occupancy  : seats taken on each segment of the route
+//   capacity   : seats the driver is offering on every segment
+//   booked_count : number of confirmed passengers
+// ============================================================
+
+const attachSegmentInfo = async (rides) => {
+  if (rides.length === 0) return rides;
+
+  const ids = rides.map((ride) => ride.id);
+
+  const stopsResult = await pool.query(
+    `
+    SELECT ride_id, stop_order, location, fare_from_start
+    FROM ride_stops
+    WHERE ride_id = ANY($1::int[])
+    ORDER BY ride_id, stop_order
+    `,
+    [ids],
+  );
+
+  const bookingsResult = await pool.query(
+    `
+    SELECT ride_id, board_index, drop_index
+    FROM bookings
+    WHERE ride_id = ANY($1::int[])
+      AND status = 'Confirmed'
+    `,
+    [ids],
+  );
+
+  return rides.map((ride) => {
+    const stopRows = stopsResult.rows.filter((row) => row.ride_id === ride.id);
+    const bookingRows = bookingsResult.rows.filter(
+      (row) => row.ride_id === ride.id,
+    );
+
+    const occupancy = buildOccupancy(stopRows.length, bookingRows);
+
+    return {
+      ...ride,
+      stops: stopRows.map((row) => ({
+        order: row.stop_order,
+        location: row.location,
+        fare: Number(row.fare_from_start),
+      })),
+      occupancy,
+      booked_count: bookingRows.length,
+      capacity: Number(ride.seats_available) + maxIn(occupancy),
+    };
+  });
 };
 
 // ============================================================
@@ -52,12 +114,63 @@ router.get("/", async (req, res) => {
       ORDER BY r.ride_date, r.departure_time;
     `);
 
-    res.json(result.rows);
+    res.json(await attachSegmentInfo(result.rows));
   } catch (error) {
     console.error("Error fetching rides:", error);
 
     res.status(500).json({
       message: "Failed to fetch rides",
+    });
+  }
+});
+
+// ============================================================
+// GET DASHBOARD STATISTICS
+// ============================================================
+
+router.get("/stats/dashboard", verifyToken, async (req, res) => {
+  try {
+    const userId = req.userId;
+
+    const result = await pool.query(
+      `
+      SELECT
+        (
+          SELECT COUNT(*)
+          FROM rides
+          WHERE driver_id = $1
+        ) AS total_rides_offered,
+
+        (
+          SELECT COUNT(*)
+          FROM bookings
+          WHERE passenger_id = $1
+        ) AS total_rides_joined,
+
+        (
+          SELECT COALESCE(SUM(b.fare), 0)
+          FROM bookings b
+          INNER JOIN rides r ON r.id = b.ride_id
+          WHERE r.driver_id = $1
+            AND r.status = 'Completed'
+            AND b.status = 'Confirmed'
+        ) AS total_earnings
+      `,
+      [userId],
+    );
+
+    const stats = result.rows[0];
+
+    res.json({
+      total_rides_offered: Number(stats.total_rides_offered),
+      total_rides_joined: Number(stats.total_rides_joined),
+      total_earnings: Number(stats.total_earnings),
+    });
+  } catch (error) {
+    console.error("Error fetching dashboard statistics:", error);
+
+    res.status(500).json({
+      message: "Failed to fetch dashboard statistics",
     });
   }
 });
@@ -107,7 +220,9 @@ router.get("/:id", async (req, res) => {
       });
     }
 
-    res.json(result.rows[0]);
+    const [ride] = await attachSegmentInfo(result.rows);
+
+    res.json(ride);
   } catch (error) {
     console.error("Error fetching ride:", error);
 
@@ -209,10 +324,33 @@ router.post("/", verifyToken, async (req, res) => {
     }
 
     // --------------------------------------------------------
-    // Create ride
+    // Validate stops
     // --------------------------------------------------------
 
-    const result = await pool.query(
+    const stopCheck = validateStops(
+      req.body.stops,
+      ridePrice,
+      from_location,
+      to_location,
+    );
+
+    if (stopCheck.error) {
+      return res.status(400).json({
+        message: stopCheck.error,
+      });
+    }
+
+    // --------------------------------------------------------
+    // Create ride + stops (one transaction)
+    // --------------------------------------------------------
+
+    const client = await pool.connect();
+    let result;
+
+    try {
+      await client.query("BEGIN");
+
+      result = await client.query(
       `
       INSERT INTO rides (
         driver_id,
@@ -253,9 +391,21 @@ router.post("/", verifyToken, async (req, res) => {
       ],
     );
 
+      await replaceRideStops(client, result.rows[0].id, stopCheck.stops);
+
+      await client.query("COMMIT");
+    } catch (insertError) {
+      await client.query("ROLLBACK");
+      throw insertError;
+    } finally {
+      client.release();
+    }
+
+    const [createdRide] = await attachSegmentInfo([result.rows[0]]);
+
     res.status(201).json({
       message: "Ride created successfully!",
-      ride: result.rows[0],
+      ride: createdRide,
     });
   } catch (error) {
     console.error("Error creating ride:", error);
@@ -367,20 +517,15 @@ router.put("/:id", verifyToken, async (req, res) => {
     // Count confirmed passengers
     // --------------------------------------------------------
 
-    const confirmedBookings = await pool.query(
-      `
-      SELECT COUNT(*)::int AS count
-      FROM bookings
-      WHERE ride_id = $1
-        AND status = 'Confirmed'
-      `,
-      [rideId],
-    );
+    // Seats are counted per part of the route, so the number that
+    // matters is the busiest segment (same as the passenger count
+    // for rides without stops).
+    const segments = await getRideSegments(pool, rideId);
 
-    const confirmedPassengerCount = confirmedBookings.rows[0].count;
+    const confirmedPassengerCount = segments.bookingCount;
 
     const maxAvailableSeats =
-      Number(existingRide.seats_total) - confirmedPassengerCount;
+      Number(existingRide.seats_total) - segments.maxOccupancy;
 
     // --------------------------------------------------------
     // Validate available seats
@@ -431,10 +576,59 @@ router.put("/:id", verifyToken, async (req, res) => {
     }
 
     // --------------------------------------------------------
-    // Update ride
+    // Stops can only be changed while nobody has booked yet
     // --------------------------------------------------------
 
-    const result = await pool.query(
+    let newStops = null;
+
+    if (Array.isArray(req.body.stops) && confirmedPassengerCount === 0) {
+      const stopCheck = validateStops(
+        req.body.stops,
+        ridePrice,
+        from_location,
+        to_location,
+      );
+
+      if (stopCheck.error) {
+        return res.status(400).json({
+          message: stopCheck.error,
+        });
+      }
+
+      newStops = stopCheck.stops;
+    }
+
+    // Existing stops stay as they are: the full price must still cover them
+    if (!newStops) {
+      const fareCheck = await pool.query(
+        `
+        SELECT COALESCE(MAX(fare_from_start), 0) AS max_fare
+        FROM ride_stops
+        WHERE ride_id = $1
+        `,
+        [rideId],
+      );
+
+      const highestStopFare = Number(fareCheck.rows[0].max_fare);
+
+      if (highestStopFare > ridePrice) {
+        return res.status(400).json({
+          message: `Price cannot be lower than ₹${highestStopFare}, the price of your last stop.`,
+        });
+      }
+    }
+
+    // --------------------------------------------------------
+    // Update ride (+ stops) in one transaction
+    // --------------------------------------------------------
+
+    const client = await pool.connect();
+    let result;
+
+    try {
+      await client.query("BEGIN");
+
+      result = await client.query(
       `
       UPDATE rides
       SET
@@ -463,15 +657,31 @@ router.put("/:id", verifyToken, async (req, res) => {
       ],
     );
 
-    if (result.rows.length === 0) {
-      return res.status(400).json({
-        message: "Ride could not be updated.",
-      });
+      if (result.rows.length === 0) {
+        await client.query("ROLLBACK");
+
+        return res.status(400).json({
+          message: "Ride could not be updated.",
+        });
+      }
+
+      if (newStops) {
+        await replaceRideStops(client, rideId, newStops);
+      }
+
+      await client.query("COMMIT");
+    } catch (updateError) {
+      await client.query("ROLLBACK");
+      throw updateError;
+    } finally {
+      client.release();
     }
+
+    const [updatedRide] = await attachSegmentInfo([result.rows[0]]);
 
     res.status(200).json({
       message: "Ride updated successfully!",
-      ride: result.rows[0],
+      ride: updatedRide,
     });
   } catch (error) {
     console.error("Error updating ride:", error);

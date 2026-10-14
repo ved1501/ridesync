@@ -1,6 +1,7 @@
 import express from "express";
 import pool from "../config/db.js";
 import { verifyToken } from "../middleware/authMiddleware.js";
+import { getRideSegments, maxIn, fareAt } from "../utils/segments.js";
 
 const router = express.Router();
 
@@ -33,6 +34,11 @@ router.get("/user/:userId", verifyToken, async (req, res) => {
         b.status,
         b.booked_at,
         b.cancelled_at,
+        b.board_index,
+        b.drop_index,
+        b.boarding_location,
+        b.dropoff_location,
+        b.fare,
 
         r.driver_id,
         u.name AS driver_name,
@@ -153,6 +159,11 @@ router.get("/ride/:rideId/passengers", verifyToken, async (req, res) => {
         b.passenger_id,
         b.booking_code,
         b.status,
+        b.board_index,
+        b.drop_index,
+        b.boarding_location,
+        b.dropoff_location,
+        b.fare,
         u.name AS passenger_name,
         u.email AS passenger_email
 
@@ -336,7 +347,7 @@ router.post("/", verifyToken, async (req, res) => {
   const client = await pool.connect();
 
   try {
-    const { ride_id } = req.body;
+    const { ride_id, board_index, drop_index } = req.body;
 
     // Always get passenger ID from authenticated user
     const passengerId = req.userId;
@@ -436,13 +447,63 @@ router.post("/", verifyToken, async (req, res) => {
     // --------------------------------------------------------
     // Check available seats
     // --------------------------------------------------------
-    if (ride.seats_available <= 0) {
+    // Seats are counted per part of the route (stops split the route
+    // into segments). For rides without stops this behaves exactly
+    // like the old "seats_available > 0" check.
+    const segments = await getRideSegments(client, rideId);
+    const lastIndex = segments.stops.length + 1;
+
+    const boardIndex =
+      board_index === undefined || board_index === null
+        ? 0
+        : Number(board_index);
+
+    const dropIndex =
+      drop_index === undefined || drop_index === null
+        ? lastIndex
+        : Number(drop_index);
+
+    if (
+      !Number.isInteger(boardIndex) ||
+      !Number.isInteger(dropIndex) ||
+      boardIndex < 0 ||
+      dropIndex > lastIndex ||
+      boardIndex >= dropIndex
+    ) {
       await client.query("ROLLBACK");
 
       return res.status(400).json({
-        message: "No seats available",
+        message: "Invalid boarding or drop-off point",
       });
     }
+
+    const points = [
+      ride.from_location,
+      ...segments.stops.map((stop) => stop.location),
+      ride.to_location,
+    ];
+
+    const boardingLocation = points[boardIndex];
+    const dropoffLocation = points[dropIndex];
+
+    const capacity = Number(ride.seats_available) + segments.maxOccupancy;
+
+    if (maxIn(segments.occupancy, boardIndex, dropIndex) >= capacity) {
+      await client.query("ROLLBACK");
+
+      return res.status(400).json({
+        message: "No seats available for this part of the journey",
+      });
+    }
+
+    const fare =
+      fareAt(dropIndex, segments.stops, ride.price) -
+      fareAt(boardIndex, segments.stops, ride.price);
+
+    // How much does the busiest segment grow after this booking?
+    const occupancyAfter = segments.occupancy.slice();
+    for (let s = boardIndex; s < dropIndex; s++) occupancyAfter[s] += 1;
+    const seatDelta = maxIn(occupancyAfter) - segments.maxOccupancy;
 
     // --------------------------------------------------------
     // Check existing booking
@@ -482,23 +543,35 @@ router.post("/", verifyToken, async (req, res) => {
           SET
             status = 'Confirmed',
             booked_at = CURRENT_TIMESTAMP,
-            cancelled_at = NULL
+            cancelled_at = NULL,
+            board_index = $2,
+            drop_index = $3,
+            boarding_location = $4,
+            dropoff_location = $5,
+            fare = $6
           WHERE id = $1
           RETURNING *
           `,
-          [existing.id],
+          [
+            existing.id,
+            boardIndex,
+            dropIndex,
+            boardingLocation,
+            dropoffLocation,
+            fare,
+          ],
         );
 
         const updatedRideResult = await client.query(
           `
           UPDATE rides
-          SET seats_available = seats_available - 1
+          SET seats_available = seats_available - $2::int
           WHERE id = $1
           RETURNING
             driver_id,
             seats_available
           `,
-          [rideId],
+          [rideId, seatDelta],
         );
 
         const updatedRide = updatedRideResult.rows[0];
@@ -543,8 +616,8 @@ router.post("/", verifyToken, async (req, res) => {
           [
             updatedRide.driver_id,
             passengerId,
-            ride.from_location,
-            ride.to_location,
+            boardingLocation,
+            dropoffLocation,
             rideId,
             updatedBooking.rows[0].id,
           ],
@@ -593,12 +666,26 @@ router.post("/", verifyToken, async (req, res) => {
         ride_id,
         passenger_id,
         booking_code,
-        status
+        status,
+        board_index,
+        drop_index,
+        boarding_location,
+        dropoff_location,
+        fare
       )
-      VALUES ($1, $2, $3, 'Confirmed')
+      VALUES ($1, $2, $3, 'Confirmed', $4, $5, $6, $7, $8)
       RETURNING *
       `,
-      [rideId, passengerId, bookingCode],
+      [
+        rideId,
+        passengerId,
+        bookingCode,
+        boardIndex,
+        dropIndex,
+        boardingLocation,
+        dropoffLocation,
+        fare,
+      ],
     );
 
     // --------------------------------------------------------
@@ -607,13 +694,13 @@ router.post("/", verifyToken, async (req, res) => {
     const updatedRideResult = await client.query(
       `
       UPDATE rides
-      SET seats_available = seats_available - 1
+      SET seats_available = seats_available - $2::int
       WHERE id = $1
       RETURNING
         driver_id,
         seats_available
       `,
-      [rideId],
+      [rideId, seatDelta],
     );
 
     const updatedRide = updatedRideResult.rows[0];
@@ -660,8 +747,8 @@ router.post("/", verifyToken, async (req, res) => {
       [
         updatedRide.driver_id,
         passengerId,
-        ride.from_location,
-        ride.to_location,
+        boardingLocation,
+        dropoffLocation,
         rideId,
         bookingResult.rows[0].id,
       ],
@@ -785,6 +872,13 @@ router.patch("/:id/cancel", verifyToken, async (req, res) => {
     // --------------------------------------------------------
     // Cancel booking
     // --------------------------------------------------------
+    // Lock the ride so seat counting cannot clash with a new booking
+    await client.query("SELECT id FROM rides WHERE id = $1 FOR UPDATE", [
+      booking.ride_id,
+    ]);
+
+    const segmentsBefore = await getRideSegments(client, booking.ride_id);
+
     const updatedBooking = await client.query(
       `
       UPDATE bookings
@@ -797,19 +891,24 @@ router.patch("/:id/cancel", verifyToken, async (req, res) => {
       [id],
     );
 
+    const segmentsAfter = await getRideSegments(client, booking.ride_id);
+
+    // Seats freed on the busiest part of the route
+    const seatGain = segmentsBefore.maxOccupancy - segmentsAfter.maxOccupancy;
+
     // --------------------------------------------------------
     // Return seat and get driver info
     // --------------------------------------------------------
     const rideInfoResult = await client.query(
       `
       UPDATE rides
-      SET seats_available = LEAST(seats_available + 1, seats_total)
+      SET seats_available = LEAST(seats_available + $2::int, seats_total)
       WHERE id = $1
       RETURNING
         driver_id,
         seats_available
       `,
-      [booking.ride_id],
+      [booking.ride_id, seatGain],
     );
 
     if (rideInfoResult.rows.length === 0) {

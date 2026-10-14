@@ -1,19 +1,20 @@
 import { useEffect, useState } from "react";
-import { MapContainer, TileLayer, Polyline, Marker, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, Polyline, Marker, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { geocode, getRoute } from "../utils/geo";
 
-const dot = (color) =>
+const dot = (color, label = "") =>
   L.divIcon({
     className: "",
-    html: `<div style="width:16px;height:16px;border-radius:50%;background:${color};border:3px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.5)"></div>`,
-    iconSize: [16, 16],
-    iconAnchor: [8, 8],
+    html: `<div style="width:20px;height:20px;border-radius:50%;background:${color};border:3px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.5);color:#fff;font:700 10px/14px sans-serif;text-align:center">${label}</div>`,
+    iconSize: [20, 20],
+    iconAnchor: [10, 10],
   });
 
 const startIcon = dot("#2563eb");
 const endIcon = dot("#16a34a");
+const stopIcon = (n) => dot("#f59e0b", n);
 
 function FitBounds({ points }) {
   const map = useMap();
@@ -23,11 +24,11 @@ function FitBounds({ points }) {
   return null;
 }
 
-// Shows the driving route between a ride's from/to place names.
-export default function RideRouteMap({ from, to, height = 320 }) {
-  // The result remembers which from/to it belongs to, so "loading" can be
-  // worked out while rendering (no setState needed at the start of the effect).
-  const key = `${from}|${to}`;
+// Shows the driving route between a ride's from/to place names,
+// passing through its stops (array of place-name strings).
+export default function RideRouteMap({ from, to, stops = [], height = 320 }) {
+  const stopsKey = stops.join("|");
+  const key = `${from}|${stopsKey}|${to}`;
   const [result, setResult] = useState({ key: "" });
 
   useEffect(() => {
@@ -36,27 +37,34 @@ export default function RideRouteMap({ from, to, height = 320 }) {
 
     (async () => {
       try {
-        const a = await geocode(from);
-        const b = await geocode(to);
-        if (cancelled) return;
+        const names = [from, ...(stopsKey ? stopsKey.split("|") : []), to];
+        const found = [];
 
-        if (!a || !b) {
-          setResult({
-            key,
-            status: "error",
-            message: `Couldn't find "${!a ? from : to}" on the map.`,
-          });
+        for (let i = 0; i < names.length; i++) {
+          const point = await geocode(names[i]);
+          if (cancelled) return;
+          found.push({ name: names[i], role: i === 0 ? "start" : i === names.length - 1 ? "end" : "stop", point });
+        }
+
+        // start and destination are required; a stop we can't find is skipped
+        if (!found[0].point || !found[found.length - 1].point) {
+          const missing = !found[0].point ? from : to;
+          setResult({ key, status: "error", message: `Couldn't find "${missing}" on the map.` });
           return;
         }
 
-        const route = await getRoute(a, b);
+        const usable = found.filter((item) => item.point);
+        const missingStops = found.filter((item) => !item.point).map((item) => item.name);
+
+        const route = await getRoute(usable.map((item) => item.point));
         if (cancelled) return;
 
         if (!route) {
           setResult({ key, status: "error", message: "No driving route found." });
           return;
         }
-        setResult({ key, status: "ready", a, b, route });
+
+        setResult({ key, status: "ready", usable, route, missingStops });
       } catch (err) {
         console.error("Route error:", err);
         if (!cancelled)
@@ -71,7 +79,7 @@ export default function RideRouteMap({ from, to, height = 320 }) {
     return () => {
       cancelled = true;
     };
-  }, [from, to, key]);
+  }, [from, to, stopsKey, key]);
 
   const state = result.key === key ? result : { status: "loading" };
   const ready = state.status === "ready";
@@ -92,8 +100,26 @@ export default function RideRouteMap({ from, to, height = 320 }) {
           {ready && (
             <>
               <Polyline positions={state.route.path} pathOptions={{ color: "#2563eb", weight: 5 }} />
-              <Marker position={[state.a.lat, state.a.lng]} icon={startIcon} />
-              <Marker position={[state.b.lat, state.b.lng]} icon={endIcon} />
+              {state.usable.map((item, i) => {
+                const stopNumber = state.usable.slice(0, i).filter((x) => x.role === "stop").length + 1;
+                return (
+                  <Marker
+                    key={`${item.name}-${i}`}
+                    position={[item.point.lat, item.point.lng]}
+                    icon={
+                      item.role === "start"
+                        ? startIcon
+                        : item.role === "end"
+                          ? endIcon
+                          : stopIcon(stopNumber)
+                    }
+                  >
+                    <Tooltip direction="top" offset={[0, -10]}>
+                      {item.name}
+                    </Tooltip>
+                  </Marker>
+                );
+              })}
               <FitBounds points={state.route.path} />
             </>
           )}
@@ -112,6 +138,11 @@ export default function RideRouteMap({ from, to, height = 320 }) {
       {ready && (
         <div className="px-4 py-2.5 text-sm text-slate-700 border-t border-slate-200">
           Distance: <b>{state.route.km} km</b> · Drive time: <b>{state.route.mins} min</b>
+          {state.missingStops.length > 0 && (
+            <p className="text-xs text-amber-600 mt-1">
+              Couldn&apos;t place on the map: {state.missingStops.join(", ")}
+            </p>
+          )}
         </div>
       )}
       {state.status === "error" && (

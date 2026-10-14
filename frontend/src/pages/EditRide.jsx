@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Link,
   useNavigate,
@@ -17,7 +17,11 @@ import {
 } from "lucide-react";
 import { useRide } from "../context/useRide";
 import Navbar from "../components/Navbar";
-import PlaceInput from "../components/PlaceInput";
+import StopsEditor from "../components/StopsEditor";
+import { newStop, validateStopsInput } from "../utils/stops";
+
+const API_URL =
+  import.meta.env.VITE_API_URL || "http://192.168.31.200:5000/api";
 
 function EditRide() {
   const { rideId } = useParams();
@@ -40,6 +44,26 @@ function EditRide() {
   });
 
   const [error, setError] = useState("");
+
+  // Stops: loaded fresh from the server (the cached ride may not have them).
+  // `stops` stays null until the driver actually changes something.
+  const [serverRide, setServerRide] = useState(null);
+  const [stops, setStops] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch(`${API_URL}/rides/${rideId}`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!cancelled && data) setServerRide(data);
+      })
+      .catch((fetchError) => console.error("Error loading stops:", fetchError));
+
+    return () => {
+      cancelled = true;
+    };
+  }, [rideId]);
 
   if (!ride) {
     return (
@@ -73,6 +97,23 @@ function EditRide() {
     price: formData.price ?? ride.price ?? "",
   };
 
+  const stopsLoaded = serverRide !== null;
+  const stopsLocked = !stopsLoaded || (serverRide.booked_count ?? 0) > 0;
+
+  const initialStops = (serverRide?.stops || []).map((stop) =>
+    newStop(stop.location, String(stop.fare), `existing-${stop.order}`),
+  );
+
+  const currentStops = stops ?? initialStops;
+
+  const stopsDisabled = isReschedule || stopsLocked;
+
+  const stopsDisabledReason = isReschedule
+    ? "Only the date and time can be changed when rescheduling."
+    : !stopsLoaded
+      ? "Loading stops..."
+      : "Passengers have already booked this ride, so its stops can't be changed.";
+
   const handleChange = (event) => {
     const { name, value } = event.target;
 
@@ -85,58 +126,58 @@ function EditRide() {
   };
 
   const handleSubmit = async (event) => {
-    event.preventDefault();
+  event.preventDefault();
 
-    // Reschedule mode
-    if (isReschedule) {
-      if (!currentFormData.date || !currentFormData.time) {
-        setError("Please select a new date and departure time.");
-        return;
-      }
-
-      const newDeparture = new Date(
-        `${currentFormData.date}T${currentFormData.time}`,
-      );
-
-      if (Number.isNaN(newDeparture.getTime())) {
-        setError("Invalid date or departure time.");
-        return;
-      }
-
-      if (newDeparture <= new Date()) {
-        setError("Rescheduled date and time must be in the future.");
-        return;
-      }
-
-      const result = await rescheduleRide(
-        ride.id,
-        currentFormData.date,
-        currentFormData.time,
-      );
-
-      if (result.success) {
-        alert(result.message);
-        navigate("/my-rides");
-      } else {
-        setError(result.message);
-      }
-
+  // Reschedule mode
+  if (isReschedule) {
+    if (!currentFormData.date || !currentFormData.time) {
+      setError("Please select a new date and departure time.");
       return;
     }
 
-    // Existing normal Edit Ride validation continues here
-    if (
-      !currentFormData.from ||
-      !currentFormData.to ||
-      !currentFormData.date ||
-      !currentFormData.time ||
-      !currentFormData.seats ||
-      !currentFormData.vehicle ||
-      !currentFormData.price
-    ) {
-      setError("Please fill all the fields.");
+    const newDeparture = new Date(
+      `${currentFormData.date}T${currentFormData.time}`,
+    );
+
+    if (Number.isNaN(newDeparture.getTime())) {
+      setError("Invalid date or departure time.");
       return;
     }
+
+    if (newDeparture <= new Date()) {
+      setError("Rescheduled date and time must be in the future.");
+      return;
+    }
+
+    const result = await rescheduleRide(
+      ride.id,
+      currentFormData.date,
+      currentFormData.time,
+    );
+
+    if (result.success) {
+      alert(result.message);
+      navigate("/my-rides");
+    } else {
+      setError(result.message);
+    }
+
+    return;
+  }
+
+  // Existing normal Edit Ride validation continues here
+  if (
+    !currentFormData.from ||
+    !currentFormData.to ||
+    !currentFormData.date ||
+    !currentFormData.time ||
+    !currentFormData.seats ||
+    !currentFormData.vehicle ||
+    !currentFormData.price
+  ) {
+    setError("Please fill all the fields.");
+    return;
+  }
 
     if (
       Number(currentFormData.seats) < 1 ||
@@ -153,6 +194,21 @@ function EditRide() {
       return;
     }
 
+    // Stops are only checked/sent if the driver changed them
+    if (stops !== null && !stopsLocked) {
+      const stopsError = validateStopsInput(
+        stops,
+        Number(currentFormData.price),
+        currentFormData.from,
+        currentFormData.to,
+      );
+
+      if (stopsError) {
+        setError(stopsError);
+        return;
+      }
+    }
+
     const updatedRide = {
       from_location: currentFormData.from,
       to_location: currentFormData.to,
@@ -162,6 +218,13 @@ function EditRide() {
       seats_available: Number(currentFormData.seats),
       price: Number(currentFormData.price),
     };
+
+    if (stops !== null && !stopsLocked) {
+      updatedRide.stops = stops.map((stop) => ({
+        location: stop.location.trim(),
+        fare: Number(stop.fare),
+      }));
+    }
 
     const result = await updateRide(ride.id, updatedRide);
 
@@ -249,7 +312,8 @@ function EditRide() {
                     From
                   </label>
 
-                  <PlaceInput
+                  <input
+                    type="text"
                     name="from"
                     value={currentFormData.from}
                     onChange={handleChange}
@@ -264,7 +328,8 @@ function EditRide() {
                     To
                   </label>
 
-                  <PlaceInput
+                  <input
+                    type="text"
                     name="to"
                     value={currentFormData.to}
                     onChange={handleChange}
@@ -274,6 +339,22 @@ function EditRide() {
                 </div>
               </div>
             </div>
+
+            {/* Stops on the way */}
+            {(!stopsDisabled || currentStops.length > 0) && (
+              <StopsEditor
+                stops={currentStops}
+                onChange={(next) => {
+                  setStops(next);
+                  setError("");
+                }}
+                fromName={currentFormData.from}
+                toName={currentFormData.to}
+                totalPrice={Number(currentFormData.price)}
+                disabled={stopsDisabled}
+                disabledReason={currentStops.length > 0 ? stopsDisabledReason : ""}
+              />
+            )}
 
             {/* Schedule */}
             <div className="border-t border-slate-400 mt-8 pt-8">

@@ -17,6 +17,12 @@ import {
 } from "lucide-react";
 import Navbar from "../components/Navbar";
 import RideRouteMap from "../components/RideRouteMap";
+import {
+  buildPoints,
+  fareBetween,
+  matchStops,
+  seatsBetween,
+} from "../utils/stops";
 
 function FindRide() {
   // const { rides, getRideStatus } = useRide();
@@ -75,6 +81,14 @@ function FindRide() {
           price: ride.price,
           status: ride.status,
 
+          // stops along the way + how many seats are taken on each part
+          stops: (ride.stops || []).map((stop) => ({
+            location: stop.location,
+            fare: Number(stop.fare),
+          })),
+          occupancy: ride.occupancy || [],
+          capacity: ride.capacity ?? ride.seats_available,
+
           driver: {
             id: ride.driver_id,
             name: ride.driver_name,
@@ -99,7 +113,9 @@ function FindRide() {
     event.preventDefault();
   };
 
-  const filteredRides = rides.filter((ride) => {
+  const filteredRides = rides
+    .map((ride) => ({ ...ride, trip: matchStops(ride, from, to) }))
+    .filter((ride) => {
     const rideDateTime = new Date(`${ride.date}T${ride.time}`);
     const now = new Date();
 
@@ -107,10 +123,12 @@ function FindRide() {
 
     const isOwnRide = Number(ride.driver?.id) === Number(user?.id);
 
-    const matchesFrom =
-      !from || ride.from.toLowerCase().includes(from.toLowerCase());
+    // Matches the start, the destination or any stop, in travel order
+    const matchesRoute = ride.trip !== null;
 
-    const matchesTo = !to || ride.to.toLowerCase().includes(to.toLowerCase());
+    const tripSeats = ride.trip
+      ? seatsBetween(ride, ride.trip.board, ride.trip.drop)
+      : 0;
 
     const matchesDate = !date || ride.date === date;
 
@@ -118,10 +136,9 @@ function FindRide() {
 
     return (
       isUpcoming &&
-      ride.seatsAvailable > 0 &&
+      tripSeats > 0 &&
       !isOwnRide &&
-      matchesFrom &&
-      matchesTo &&
+      matchesRoute &&
       matchesDate &&
       matchesTime
     );
@@ -316,30 +333,42 @@ function FindRide() {
                         </div>
                       </div>
 
-                      {/* Route */}
-                      <div className="flex items-center gap-4">
-                        <div>
-                          <p className="text-sm text-slate-500">From</p>
+                      {/* Route (the part of the journey that matches the search) */}
+                      <div>
+                        <div className="flex items-center gap-4">
+                          <div>
+                            <p className="text-sm text-slate-500">From</p>
 
-                          <p className="font-semibold text-slate-900">
-                            {ride.from}
+                            <p className="font-semibold text-slate-900">
+                              {buildPoints(ride)[ride.trip.board].location}
+                            </p>
+                          </div>
+
+                          <div className="w-12">
+                            <Navigation
+                              size={16}
+                              className="text-blue-600 ml-5"
+                            />
+                          </div>
+
+                          <div>
+                            <p className="text-sm text-slate-500">To</p>
+
+                            <p className="font-semibold text-slate-900">
+                              {buildPoints(ride)[ride.trip.drop].location}
+                            </p>
+                          </div>
+                        </div>
+
+                        {ride.stops.length > 0 && (
+                          <p className="text-xs text-slate-500 mt-2 max-w-xs">
+                            Ride goes {ride.from.split(",")[0]} →{" "}
+                            {ride.stops
+                              .map((stop) => stop.location.split(",")[0])
+                              .join(" → ")}{" "}
+                            → {ride.to.split(",")[0]}
                           </p>
-                        </div>
-
-                        <div className="w-12">
-                          <Navigation
-                            size={16}
-                            className="text-blue-600 ml-5"
-                          />
-                        </div>
-
-                        <div>
-                          <p className="text-sm text-slate-500">To</p>
-
-                          <p className="font-semibold text-slate-900">
-                            {ride.to}
-                          </p>
-                        </div>
+                        )}
                       </div>
 
                       {/* Date / Time */}
@@ -364,20 +393,23 @@ function FindRide() {
 
                         <div className="flex items-center gap-2 text-slate-500 mt-2">
                           <Users size={17} />
-                          <span>{ride.seatsAvailable} seats available</span>
+                          <span>
+                            {seatsBetween(ride, ride.trip.board, ride.trip.drop)}{" "}
+                            seats available
+                          </span>
                         </div>
                       </div>
 
                       {/* Price */}
                       <div className="text-right">
                         <p className="text-2xl font-bold text-slate-900">
-                          ₹{ride.price}
+                          ₹{fareBetween(ride, ride.trip.board, ride.trip.drop)}
                         </p>
 
                         <p className="text-xs text-slate-500">per seat</p>
 
                         <Link
-                          to={`/ride/${ride.id}`}
+                          to={`/ride/${ride.id}?board=${ride.trip.board}&drop=${ride.trip.drop}`}
                           className="inline-block mt-3 px-5 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
                         >
                           View Ride
@@ -400,7 +432,12 @@ function FindRide() {
 
                     {openRouteId === ride.id && (
                       <div className="mt-5">
-                        <RideRouteMap from={ride.from} to={ride.to} height={280} />
+                        <RideRouteMap
+                          from={ride.from}
+                          to={ride.to}
+                          stops={ride.stops.map((stop) => stop.location)}
+                          height={280}
+                        />
                       </div>
                     )}
                   </div>

@@ -1,12 +1,89 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Search, Car, MapPin, Building2, ArrowRight } from "lucide-react";
+import {
+  Search,
+  Car,
+  MapPin,
+  Building2,
+  ArrowRight,
+  Users,
+  Wallet,
+  Route,
+} from "lucide-react";
 import { useAuth } from "../context/useAuth";
 // import UserMenu from "../components/UserMenu";
 import Navbar from "../components/Navbar";
 import { useRide } from "../context/useRide";
+import { authFetch } from "../utils/api";
 
 function Dashboard() {
-  const { user } = useAuth();
+  const API_URL =
+    import.meta.env.VITE_API_URL || "http://192.168.31.200:5000/api";
+
+  const { user, token } = useAuth();
+
+  const [dashboardStats, setDashboardStats] = useState({
+    totalRidesOffered: 0,
+    totalRidesJoined: 0,
+    totalEarnings: 0,
+  });
+
+  const [loadingStats, setLoadingStats] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchDashboardStats = async () => {
+      if (!user?.id || !token) {
+        if (isMounted) {
+          setDashboardStats({
+            totalRidesOffered: 0,
+            totalRidesJoined: 0,
+            totalEarnings: 0,
+          });
+
+          setLoadingStats(false);
+        }
+
+        return;
+      }
+
+      setLoadingStats(true);
+
+      try {
+        const response = await authFetch(
+          `${API_URL}/rides/stats/dashboard`,
+          token,
+        );
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch dashboard statistics");
+        }
+
+        const data = await response.json();
+
+        if (isMounted) {
+          setDashboardStats({
+            totalRidesOffered: Number(data.total_rides_offered) || 0,
+            totalRidesJoined: Number(data.total_rides_joined) || 0,
+            totalEarnings: Number(data.total_earnings) || 0,
+          });
+        }
+      } catch (error) {
+        console.error("Error fetching dashboard statistics:", error);
+      } finally {
+        if (isMounted) {
+          setLoadingStats(false);
+        }
+      }
+    };
+
+    fetchDashboardStats();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.id, token]);
 
   const formatRideDate = (date) => {
     if (!date) return "";
@@ -136,6 +213,83 @@ function Dashboard() {
 
             <p className="text-slate-100 mt-2">Where are you heading today?</p>
           </div>
+
+          {/* Dashboard Statistics */}
+          <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 mt-8">
+            {/* Total Rides Offered */}
+            <div className="bg-white rounded-2xl border border-slate-100 p-6 shadow-sm hover:shadow-md transition-shadow">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-slate-500">
+                    Total Rides Offered
+                  </p>
+
+                  <h3 className="text-3xl font-bold text-slate-900 mt-3">
+                    {loadingStats ? "..." : dashboardStats.totalRidesOffered}
+                  </h3>
+                </div>
+
+                <div className="w-12 h-12 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center">
+                  <Route size={25} />
+                </div>
+              </div>
+
+              <p className="text-sm text-slate-500 mt-4">
+                Rides shared with others
+              </p>
+            </div>
+
+            {/* Total Rides Joined */}
+            <div className="bg-white rounded-2xl border border-slate-100 p-6 shadow-sm hover:shadow-md transition-shadow">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-slate-500">
+                    Total Rides Joined
+                  </p>
+
+                  <h3 className="text-3xl font-bold text-slate-900 mt-3">
+                    {loadingStats ? "..." : dashboardStats.totalRidesJoined}
+                  </h3>
+                </div>
+
+                <div className="w-12 h-12 rounded-xl bg-green-100 text-green-600 flex items-center justify-center">
+                  <Users size={25} />
+                </div>
+              </div>
+
+              <p className="text-sm text-slate-500 mt-4">Your ride bookings</p>
+            </div>
+
+            {/* Total Earnings */}
+            <div className="bg-white rounded-2xl border border-slate-100 p-6 shadow-sm hover:shadow-md transition-shadow sm:col-span-2 lg:col-span-1">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-slate-500">
+                    Total Earnings
+                  </p>
+
+                  <h3 className="text-3xl font-bold text-slate-900 mt-3">
+                    {loadingStats
+                      ? "..."
+                      : new Intl.NumberFormat("en-IN", {
+                          style: "currency",
+                          currency: "INR",
+                          maximumFractionDigits: 2,
+                        }).format(dashboardStats.totalEarnings)}
+                  </h3>
+                </div>
+
+                <div className="w-12 h-12 rounded-xl bg-purple-100 text-purple-600 flex items-center justify-center">
+                  <Wallet size={25} />
+                </div>
+              </div>
+
+              <p className="text-sm text-slate-500 mt-4">
+                Earnings from completed rides
+              </p>
+            </div>
+          </section>
+
           {/* Action Cards */}
           <div className="grid md:grid-cols-2 gap-6 mt-8">
             <Link

@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import Navbar from "../components/Navbar";
 import LocationPicker from "../components/LocationPicker";
+import StopsEditor from "../components/StopsEditor";
+import { validateStopsInput } from "../utils/stops";
 
 function OfferRide() {
   const navigate = useNavigate();
@@ -30,6 +32,8 @@ function OfferRide() {
     vehicle: "",
     price: "",
   });
+
+  const [stops, setStops] = useState([]);
 
   const [error, setError] = useState("");
 
@@ -70,6 +74,18 @@ function OfferRide() {
       return;
     }
 
+    const stopsError = validateStopsInput(
+      stops,
+      Number(formData.price),
+      formData.from,
+      formData.to,
+    );
+
+    if (stopsError) {
+      setError(stopsError);
+      return;
+    }
+
     console.log("FORM DATA BEFORE SUBMIT:", formData);
 
     const newRide = {
@@ -82,6 +98,10 @@ function OfferRide() {
       seats_total: Number(formData.seats),
       seats_available: Number(formData.seats),
       price: Number(formData.price),
+      stops: stops.map((stop) => ({
+        location: stop.location.trim(),
+        fare: Number(stop.fare),
+      })),
     };
 
     const result = await addRide(newRide);
@@ -193,6 +213,18 @@ function OfferRide() {
               </div>
             </div>
           </div>
+
+          {/* Stops on the way */}
+          <StopsEditor
+            stops={stops}
+            onChange={(next) => {
+              setStops(next);
+              setError("");
+            }}
+            fromName={formData.from}
+            toName={formData.to}
+            totalPrice={Number(formData.price)}
+          />
 
           {/* Schedule */}
           <div className="border-t border-slate-200 mt-8 pt-8">

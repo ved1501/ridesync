@@ -1,4 +1,9 @@
-import { Link, useParams, useNavigate } from "react-router-dom";
+import {
+  Link,
+  useParams,
+  useNavigate,
+  useSearchParams,
+} from "react-router-dom";
 // import UserMenu from "../components/UserMenu";
 import { useState, useEffect } from "react";
 import { io } from "socket.io-client";
@@ -21,6 +26,12 @@ import {
 import Navbar from "../components/Navbar";
 import RideRouteMap from "../components/RideRouteMap";
 import DriverReviewsModal from "../components/DriverReviewsModal";
+import {
+  buildPoints,
+  fareBetween,
+  seatsBetween,
+  shiftOccupancy,
+} from "../utils/stops";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://192.168.31.200:5000/api";
 const SOCKET_URL = "http://192.168.31.200:5000";
@@ -55,6 +66,12 @@ function RideDetails() {
   const [alreadyJoined, setAlreadyJoined] = useState(false);
 
   const [showReviews, setShowReviews] = useState(false);
+
+  // Stops: which part of the journey the passenger wants to book
+  const [searchParams] = useSearchParams();
+  const [boardChoice, setBoardChoice] = useState(null);
+  const [dropChoice, setDropChoice] = useState(null);
+  const [myTrip, setMyTrip] = useState(null);
 
   const [driverRating, setDriverRating] = useState({
     averageRating: 0,
@@ -103,6 +120,14 @@ function RideDetails() {
           status: data.status,
           cancelledAt: data.cancelled_at || null,
 
+          // stops along the way + seats taken on each part of the route
+          stops: (data.stops || []).map((stop) => ({
+            location: stop.location,
+            fare: Number(stop.fare),
+          })),
+          occupancy: data.occupancy || [],
+          capacity: data.capacity ?? data.seats_available,
+
           driver: {
             id: data.driver_id,
             name: data.driver_name,
@@ -149,6 +174,15 @@ function RideDetails() {
 
         if (activeBooking) {
           setAlreadyJoined(true);
+
+          setMyTrip({
+            from: activeBooking.boarding_location || null,
+            to: activeBooking.dropoff_location || null,
+            fare:
+              activeBooking.fare !== null && activeBooking.fare !== undefined
+                ? Number(activeBooking.fare)
+                : null,
+          });
 
           setBooking({
             bookingId: activeBooking.booking_code,
@@ -651,11 +685,39 @@ function RideDetails() {
       new Date(`${ride.rawDate}T${ride.time}`).getTime() + 30 * 60 * 1000,
     ) < new Date();
 
+  // Which part of the journey is selected (from the search link or the
+  // dropdowns). Without stops this is simply start -> destination.
+  const resolveTrip = () => {
+    const lastIndex = (ride?.stops?.length ?? 0) + 1;
+
+    const queryBoard = searchParams.get("board");
+    const queryDrop = searchParams.get("drop");
+
+    const wantedBoard =
+      boardChoice ??
+      (queryBoard !== null && Number.isInteger(Number(queryBoard))
+        ? Number(queryBoard)
+        : 0);
+
+    const wantedDrop =
+      dropChoice ??
+      (queryDrop !== null && Number.isInteger(Number(queryDrop))
+        ? Number(queryDrop)
+        : lastIndex);
+
+    const board = Math.min(Math.max(wantedBoard, 0), lastIndex - 1);
+    const drop = Math.min(Math.max(wantedDrop, board + 1), lastIndex);
+
+    return { board, drop, lastIndex };
+  };
+
   const handleJoinRide = async () => {
     if (!user?.id) {
       alert("Please login first");
       return;
     }
+
+    const trip = resolveTrip();
 
     console.log("Booking request:", {
       ride_id: ride.id,
@@ -670,6 +732,8 @@ function RideDetails() {
         },
         body: JSON.stringify({
           ride_id: ride.id,
+          board_index: trip.board,
+          drop_index: trip.drop,
         }),
       });
 
@@ -687,10 +751,27 @@ function RideDetails() {
 
       setAlreadyJoined(true);
 
-      // Update available seats immediately
+      // Remember which part of the journey was booked
+      const joinedPoints = buildPoints(ride);
+
+      setMyTrip({
+        from: joinedPoints[trip.board].location,
+        to: joinedPoints[trip.drop].location,
+        fare:
+          data.booking.fare !== null && data.booking.fare !== undefined
+            ? Number(data.booking.fare)
+            : fareBetween(ride, trip.board, trip.drop),
+      });
+
+      // Update the seats taken on that part of the route immediately
       setRide((previousRide) => ({
         ...previousRide,
-        seatsAvailable: previousRide.seatsAvailable - 1,
+        occupancy: shiftOccupancy(
+          previousRide.occupancy,
+          trip.board,
+          trip.drop,
+          1,
+        ),
       }));
 
       // Sync context so My Rides page shows this ride without needing a refresh
@@ -754,9 +835,20 @@ function RideDetails() {
         },
       ]);
 
+      // Free the seat on the part of the route this passenger had booked
+      const leftBoard = activeBooking.board_index ?? 0;
+      const leftDrop = activeBooking.drop_index ?? ride.stops.length + 1;
+
+      setMyTrip(null);
+
       setRide((previousRide) => ({
         ...previousRide,
-        seatsAvailable: previousRide.seatsAvailable + 1,
+        occupancy: shiftOccupancy(
+          previousRide.occupancy,
+          leftBoard,
+          leftDrop,
+          -1,
+        ),
       }));
 
       // Sync context so the Cancelled section on My Rides reflects this immediately
@@ -952,6 +1044,19 @@ function RideDetails() {
     );
   }
 
+  // Selected part of the journey, its fare and the seats free on it
+  const { board: tripBoard, drop: tripDrop } = resolveTrip();
+  const tripPoints = buildPoints(ride);
+  const tripSeats = seatsBetween(ride, tripBoard, tripDrop);
+  const tripFare = fareBetween(ride, tripBoard, tripDrop);
+  const hasStops = ride.stops.length > 0;
+  const hasJoined = alreadyJoined || Boolean(booking);
+  const displayFare =
+    hasJoined && myTrip?.fare !== null && myTrip?.fare !== undefined
+      ? myTrip.fare
+      : tripFare;
+  const visibleSeats = isOwnRide ? ride.seatsAvailable : tripSeats;
+
   return (
     <div className="relative z-10 min-h-screen">
       {/* Navbar */}
@@ -1048,8 +1153,61 @@ function RideDetails() {
 
             {/* Route map */}
             <div className="mt-6">
-              <RideRouteMap from={ride.from} to={ride.to} />
+              <RideRouteMap
+                from={ride.from}
+                to={ride.to}
+                stops={ride.stops.map((stop) => stop.location)}
+              />
             </div>
+
+            {/* Stops timeline */}
+            {hasStops && (
+              <div className="mt-6 border-t border-slate-200 pt-6">
+                <h3 className="font-semibold text-slate-900">
+                  Route and stops
+                </h3>
+
+                <ol className="mt-4">
+                  {tripPoints.map((point, i) => {
+                    const isFirst = i === 0;
+                    const isLast = i === tripPoints.length - 1;
+
+                    return (
+                      <li key={point.index} className="flex gap-3">
+                        <div className="flex flex-col items-center">
+                          <span
+                            className={`w-3.5 h-3.5 rounded-full border-2 border-white shadow ${
+                              isFirst
+                                ? "bg-blue-600"
+                                : isLast
+                                  ? "bg-green-600"
+                                  : "bg-amber-500"
+                            }`}
+                          />
+                          {!isLast && (
+                            <span className="w-0.5 flex-1 bg-slate-300 my-1" />
+                          )}
+                        </div>
+
+                        <div className="pb-4">
+                          <p className="font-medium text-slate-900 leading-tight">
+                            {point.location}
+                          </p>
+
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            {isFirst
+                              ? "Start"
+                              : isLast
+                                ? `Destination · ₹${point.fare} from start`
+                                : `Stop ${i} · ₹${point.fare} from start`}
+                          </p>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </div>
+            )}
           </div>
 
           {/* Details Grid */}
@@ -1083,6 +1241,11 @@ function RideDetails() {
                     {driverRating.reviewCount > 0
                       ? `${driverRating.averageRating.toFixed(1)} (${driverRating.reviewCount} review${driverRating.reviewCount === 1 ? "" : "s"})`
                       : "No reviews yet"}
+                    {driverRating.reviewCount > 0 && (
+                      <span className="ml-1 text-blue-600 underline">
+                        See reviews
+                      </span>
+                    )}
                   </button>
                 </div>
               </div>
@@ -1118,7 +1281,7 @@ function RideDetails() {
 
                   <div className="flex items-center gap-2 mt-1 text-sm text-slate-500">
                     <Users size={16} />
-                    {ride.seatsAvailable} seats available
+                    {visibleSeats} seats available
                   </div>
                 </div>
               </div>
@@ -1172,6 +1335,16 @@ function RideDetails() {
                           <p className="text-sm text-slate-500">
                             {passenger.passenger_email}
                           </p>
+
+                          {passenger.boarding_location && (
+                            <p className="text-xs text-blue-700 mt-1">
+                              {passenger.boarding_location} →{" "}
+                              {passenger.dropoff_location}
+                              {passenger.fare !== null &&
+                                passenger.fare !== undefined &&
+                                ` · ₹${Number(passenger.fare)}`}
+                            </p>
+                          )}
                         </div>
                       </div>
 
@@ -1261,6 +1434,13 @@ function RideDetails() {
                   <p className="text-sm text-green-700 mt-1">
                     Your seat has been confirmed.
                   </p>
+
+                  {myTrip?.from && (
+                    <p className="text-sm text-green-800 font-medium mt-2">
+                      Your trip: {myTrip.from} → {myTrip.to}
+                      {myTrip.fare !== null && ` · ₹${myTrip.fare}`}
+                    </p>
+                  )}
 
                   <div className="mt-4">
                     <p className="text-xs text-green-600 font-medium">
@@ -1365,18 +1545,87 @@ function RideDetails() {
               </div>
             )}
 
+          {/* Choose boarding and drop-off (rides with stops) */}
+          {!isOwnRide &&
+            hasStops &&
+            ride.status === "Active" &&
+            !hasJoined &&
+            !gracePeriodEnded && (
+              <div className="bg-white border border-slate-100 rounded-2xl p-6 mt-6">
+                <h2 className="text-lg font-bold text-slate-900">
+                  Choose your trip
+                </h2>
+
+                <p className="text-sm text-slate-500 mt-1">
+                  Get on and off at any point on this route.
+                </p>
+
+                <div className="grid md:grid-cols-2 gap-4 mt-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      Boarding point
+                    </label>
+
+                    <select
+                      value={tripBoard}
+                      onChange={(event) => {
+                        setBoardChoice(Number(event.target.value));
+                        setDropChoice(null);
+                      }}
+                      className="w-full px-4 py-3 border border-slate-300 rounded-lg outline-none bg-white focus:ring-2 focus:ring-blue-500"
+                    >
+                      {tripPoints.slice(0, -1).map((point) => (
+                        <option key={point.index} value={point.index}>
+                          {point.location}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      Drop-off point
+                    </label>
+
+                    <select
+                      value={tripDrop}
+                      onChange={(event) =>
+                        setDropChoice(Number(event.target.value))
+                      }
+                      className="w-full px-4 py-3 border border-slate-300 rounded-lg outline-none bg-white focus:ring-2 focus:ring-blue-500"
+                    >
+                      {tripPoints.slice(tripBoard + 1).map((point) => (
+                        <option key={point.index} value={point.index}>
+                          {point.location}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <p className="text-sm text-slate-600 mt-4">
+                  Fare: <b>₹{tripFare}</b> · Seats free on this part:{" "}
+                  <b>{tripSeats}</b>
+                </p>
+              </div>
+            )}
+
           {/* Join Card */}
           <div className="bg-white border border-slate-100 rounded-2xl p-6 mt-6">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
               <div>
-                <p className="text-sm text-slate-500">Contribution per seat</p>
+                <p className="text-sm text-slate-500">
+                  {hasStops && !isOwnRide
+                    ? "Your fare for this trip"
+                    : "Contribution per seat"}
+                </p>
 
                 <p className="text-3xl font-bold text-slate-900 mt-1">
-                  ₹{ride.price}
+                  ₹{displayFare}
                 </p>
 
                 <p className="text-sm text-slate-500 mt-1">
-                  {ride.seatsAvailable} seats currently available
+                  {visibleSeats} seats currently available
                 </p>
               </div>
               {ride.status === "Cancelled" ? (
@@ -1548,10 +1797,10 @@ function RideDetails() {
               ) : (
                 <button
                   onClick={handleJoinRide}
-                  disabled={ride.seatsAvailable <= 0}
+                  disabled={tripSeats <= 0}
                   className="px-6 py-4 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 disabled:bg-slate-400 disabled:cursor-not-allowed transition-all active:scale-[0.98]"
                 >
-                  {ride.seatsAvailable > 0 ? "Join Ride" : "No Seats Available"}
+                  {tripSeats > 0 ? "Join Ride" : "No Seats Available"}
                 </button>
               )}
             </div>

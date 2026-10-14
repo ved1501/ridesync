@@ -7,10 +7,10 @@ import { AuthProvider } from "./context/AuthProvider";
 
 createRoot(document.getElementById("root")).render(
   <StrictMode>
-      <AuthProvider>
-        <RideProvider>
-          <App />
-        </RideProvider>
-      </AuthProvider>
+    <AuthProvider>
+      <RideProvider>
+        <App />
+      </RideProvider>
+    </AuthProvider>
   </StrictMode>
 );

@@ -3,8 +3,35 @@
 
 const NOMINATIM = "https://nominatim.openstreetmap.org";
 const OSRM = "https://router.project-osrm.org";
+const CACHE_KEY = "ridesync-geocode-cache";
 
+// ---------- small cache, so the same place is looked up only once ----------
 const geocodeCache = new Map();
+
+try {
+  const saved = JSON.parse(localStorage.getItem(CACHE_KEY) || "{}");
+  Object.entries(saved).forEach(([key, value]) => geocodeCache.set(key, value));
+} catch {
+  // storage not available: the cache just lives in memory
+}
+
+function saveCache() {
+  try {
+    const recent = Array.from(geocodeCache.entries()).slice(-200);
+    localStorage.setItem(CACHE_KEY, JSON.stringify(Object.fromEntries(recent)));
+  } catch {
+    // ignore
+  }
+}
+
+// ---------- the free server allows about 1 request per second ----------
+let lastRequestAt = 0;
+
+async function throttle() {
+  const wait = 1100 - (Date.now() - lastRequestAt);
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+  lastRequestAt = Date.now();
+}
 
 // "Dhapewada, Gondia, Maharashtra, India" -> short readable label
 function shortLabel(displayName) {
@@ -50,23 +77,26 @@ export async function geocode(text) {
     const url =
       `${NOMINATIM}/search?format=jsonv2&limit=1&countrycodes=in` +
       `&accept-language=en&q=${encodeURIComponent(q)}`;
+
+    await throttle();
     const res = await fetch(url);
     if (!res.ok) continue;
     const data = await res.json();
     if (data.length) {
       const point = { lat: Number(data[0].lat), lng: Number(data[0].lon) };
       geocodeCache.set(key, point);
+      saveCache();
       return point;
     }
   }
   return null;
 }
 
-// Driving route between two coordinates
-export async function getRoute(a, b) {
-  const url =
-    `${OSRM}/route/v1/driving/${a.lng},${a.lat};${b.lng},${b.lat}` +
-    `?overview=full&geometries=geojson`;
+// Driving route through a list of points: [{ lat, lng }, ...]
+// (start, every stop in order, destination)
+export async function getRoute(points) {
+  const coordinates = points.map((p) => `${p.lng},${p.lat}`).join(";");
+  const url = `${OSRM}/route/v1/driving/${coordinates}?overview=full&geometries=geojson`;
   const res = await fetch(url);
   if (!res.ok) throw new Error("Routing failed");
   const data = await res.json();
